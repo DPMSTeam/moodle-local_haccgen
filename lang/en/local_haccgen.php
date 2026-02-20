@@ -190,6 +190,7 @@ $string['please_complete'] = 'Please complete form';
 $string['please_select'] = 'Please select a valid option.';
 $string['pluginname'] = 'HACC Gen';
 $string['previewtitle'] = 'Preview';
+$string['privacy:metadata'] = 'The HACCGEN local plugin does not store any personal data.';
 $string['proceed'] = 'Proceed';
 $string['provider_desc'] = 'Choose which AI provider to use for course generation.';
 $string['provider_for_content'] = 'Provider for content (step 4)';
