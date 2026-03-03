@@ -1,0 +1,171 @@
+{{! 
+This file is part of Moodle
+
+ISO Latin-1 encoding translations
+Source: PostScript::ISOLatin1Encoding (Perl)
+
+@package local_haccgen
+@copyright 2026 Dynamicpixel Multimedia Solutions
+@license GNU GPL v3 or later
+}}
+<div id="jobstatus"
+     data-jobid="{{jobid}}"
+     data-statusurl="{{statusurl}}"
+     data-consumeurl="{{consumeurl}}"
+     data-sesskey="{{sesskey}}">
+
+  <div class="aic-progress-wrap">
+    <div class="aic-progress-label">
+      <div>Status:
+        <span id="aic-status" class="aic-status badge badge-queued">
+          queued
+        </span>
+      </div>
+      <div><span id="aic-percent">0</span>%</div>
+    </div>
+
+    <div class="progress" role="progressbar"
+         aria-valuemin="0" aria-valuemax="100">
+      <div id="aic-bar"
+           class="progress-bar"
+           style="width:0%">0%</div>
+    </div>
+
+    <div class="aic-progress-extra">
+      <div>⏱ Elapsed:
+        <span id="aic-timer">0:00</span>
+      </div>
+    </div>
+
+    <div id="aic-rotating">Getting things ready...</div>
+
+    <pre id="aic-msg"></pre>
+  </div>
+
+  <form id="continueform"
+        method="post"
+        action="{{consumeurl}}"
+        style="display:none;">
+
+    <input type="hidden" name="jobid" value="{{jobid}}">
+    <input type="hidden" name="sesskey" value="{{sesskey}}">
+    <button id="continuebtn"
+            class="btn btn-primary mt-3">
+      Continue
+    </button>
+  </form>
+
+</div>
+
+<style>
+  .aic-progress-wrap {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    border-radius: 10px;
+    background: #f9fafc;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+
+  .aic-progress-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    margin-bottom: .75rem;
+  }
+
+  .aic-status {
+    font-weight: 600;
+    text-transform: capitalize;
+  }
+
+  /* Status badge colors */
+  .badge {
+    display: inline-block;
+    padding: 0.35em 0.6em;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border-radius: 0.35rem;
+    color: #fff;
+  }
+
+  .badge-queued {
+    background: #6c757d;
+  }
+
+  .badge-running {
+    background: #007bff;
+  }
+
+  .badge-success {
+    background: #28a745;
+  }
+
+  .badge-error {
+    background: #dc3545;
+  }
+
+  .progress {
+    height: 28px;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    background: linear-gradient(45deg,
+        rgba(255, 255, 255, 0.25) 25%,
+        transparent 25%,
+        transparent 50%,
+        rgba(255, 255, 255, 0.25) 50%,
+        rgba(255, 255, 255, 0.25) 75%,
+        transparent 75%,
+        transparent);
+    background-size: 1.5rem 1.5rem;
+    background-color: #007bff;
+    font-weight: 600;
+    color: #fff;
+    transition: width 0.4s ease;
+    animation: progress-stripes 1s linear infinite;
+  }
+
+  @keyframes progress-stripes {
+    from {
+      background-position: 1.5rem 0;
+    }
+
+    to {
+      background-position: 0 0;
+    }
+  }
+
+  .progress-bar.glow {
+    box-shadow: 0 0 10px rgba(0, 200, 255, 0.7),
+      0 0 20px rgba(0, 200, 255, 0.5);
+  }
+
+  .aic-progress-extra {
+    margin-top: .75rem;
+    display: flex;
+    justify-content: flex-start;
+    font-size: 0.95rem;
+    color: #333;
+  }
+
+  #aic-rotating {
+    margin-top: 1rem;
+    font-style: italic;
+    font-size: 1rem;
+    color: #555;
+    transition: opacity 0.6s ease;
+  }
+
+  #aic-msg {
+    background: #f0f4f8;
+    padding: .75rem;
+    border-radius: 6px;
+    margin-top: 1rem;
+    font-family: monospace;
+    font-size: 0.9rem;
+    white-space: pre-wrap;
+  }
+</style>
