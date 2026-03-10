@@ -44,12 +44,6 @@ try {
     $statusactive = false;
 }
 
-$globalscormtype = get_config('local_haccgen', 'scormtype');
-$globalpassingscore = get_config('local_haccgen', 'passingscore');
-$globalscormversion = get_config('local_haccgen', 'scormversion');
-
-$isscorm = optional_param('make_scorm', 0, PARAM_BOOL);
-
 $courseid = required_param('id', PARAM_INT);
 $step = optional_param('step', 1, PARAM_INT);
 
@@ -422,7 +416,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
             } catch (Throwable $e) {
                 $errors['general'] = get_string('invalidtopicorder', 'local_haccgen', $e->getMessage());
             }
-        } else if ($step == 4 && ($action === 'save' || $isscorm)) {
+        } else if ($step == 4 && $action === 'save') {
 
             // Logger.
             $logdir = $CFG->dataroot . '/local_haccgen';
@@ -1447,6 +1441,7 @@ if ($step == 3) {
 
             // Store it in local $data for later steps.
             $data->case_study_data = $haccgendata->case_study_data;
+            \local_haccgen\session_store::set('haccgen_data', $haccgendata);
 
             // Format topics.
             $formdata['topics'] = array_map(function ($index, $subtopic) use ($subtopics) {
@@ -1773,12 +1768,6 @@ if ($step == 3) {
     $coursehasquiz = $totalquizzes > 0;
 
     $haccgendata = $haccgendata ?? new stdClass();
-    $haccgendata->scorm_meta = [
-        'total_slides'  => $totalslides,
-        'total_quizzes' => $totalquizzes,
-        'has_quiz'      => $coursehasquiz,
-        'quiz_list'     => $quizlist,
-    ];
 
     // Final JSON to pass to the template.
     $formdata['subtopicContentJson'] = json_encode($subtopiccontentmap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
