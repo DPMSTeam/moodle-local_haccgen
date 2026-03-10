@@ -1,0 +1,349 @@
+/* ======================================================
+   HACCGEN Plugin Styles
+   Scoped to .haccgen-container to avoid global conflicts
+   ====================================================== */
+
+/* Container */
+.haccgen-container {
+    padding: 20px;
+    background: #ffffff;
+    min-height: 100vh;
+    position: relative;
+    z-index: 1;
+}
+
+/* ======================================================
+   Step Progress Bar
+   ====================================================== */
+
+.haccgen-container .step-progress-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 25px 0;
+    position: relative;
+}
+
+.haccgen-container .step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+}
+
+.haccgen-container .step-circle {
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+    background: #0069cc;
+    color: #666;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 1.2rem;
+    border: 2px solid #bbb;
+}
+
+.haccgen-container .step-circle-active {
+    background: #0069cc;
+    color: #ffffff;
+    border: 2px solid #0056b3;
+}
+
+.haccgen-container .step-label {
+    margin-top: 8px;
+    font-size: 1rem;
+    color: #666;
+    font-family: 'Roboto', sans-serif;
+}
+
+.haccgen-container .step-active .step-label {
+    color: #0069cc;
+}
+
+.haccgen-container .step-connector {
+    width: 60px;
+    height: 2.5px;
+    background: #e0e0e0;
+    border-radius: 2px;
+    margin-bottom: 25px;
+}
+
+.haccgen-container .connector-active {
+    background: #0069cc;
+}
+
+/* ======================================================
+   Step Tooltip
+   ====================================================== */
+
+.haccgen-container .step::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: -40px;
+    background: #333;
+    color: #fff;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 0.9rem;
+    font-family: 'Roboto', sans-serif;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    transform: translateY(10px);
+}
+
+.haccgen-container .step:hover::after {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* ======================================================
+   Input Section
+   ====================================================== */
+
+.haccgen-container .input-section {
+    padding: 20px;
+    background: #ffffff;
+    border-radius: 10px;
+}
+
+/* ======================================================
+   Preview Card
+   ====================================================== */
+
+.haccgen-container .preview-card {
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    background: #ffffff;
+    margin-top: 40px;
+    width: 400px;
+    height: 250px;
+}
+
+.haccgen-container .haccgen-preview-inner {
+    background-color: #fff;
+    border-radius: 12px;
+    width: 100%;
+}
+
+/* Preview Text */
+
+.haccgen-container #preview-title {
+    color: #333;
+    font-size: 1.6rem;
+    margin-bottom: 15px;
+    font-weight: 500;
+    font-family: 'Roboto', sans-serif;
+    animation: haccgen-slideIn 0.5s ease;
+}
+
+.haccgen-container #preview-audience,
+.haccgen-container #preview-description,
+.haccgen-container #preview-pdf,
+.haccgen-container #preview-level,
+.haccgen-container #preview-tone,
+.haccgen-container #preview-duration,
+.haccgen-container #preview-file {
+    font-style: italic;
+    color: #666;
+    font-size: 1.1rem;
+    font-family: 'Roboto', sans-serif;
+    animation: haccgen-slideIn 0.5s ease 0.2s;
+}
+
+/* ======================================================
+   Radio Buttons
+   ====================================================== */
+
+.haccgen-container .generation-type {
+    margin-bottom: 1.5rem;
+}
+
+.haccgen-container .radio-group {
+    display: flex;
+    gap: 20px;
+}
+
+.haccgen-container .radio-label {
+    display: flex;
+    align-items: center;
+    font-family: 'Roboto', sans-serif;
+    font-size: 1rem;
+    color: #333;
+    cursor: pointer;
+}
+
+.haccgen-container .radio-label input[type="radio"] {
+    margin-right: 8px;
+    accent-color: #0069cc;
+}
+
+/* ======================================================
+   Form Inputs
+   ====================================================== */
+
+.haccgen-container .form-group {
+    margin-bottom: 1.5rem;
+}
+
+.haccgen-container .modern-input {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background: lightgrey;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    font-family: 'Roboto', sans-serif;
+    font-size: 1rem;
+    color: #333;
+}
+
+.haccgen-container .modern-input:focus {
+    border-color: #0069cc;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2);
+    outline: none;
+}
+
+.haccgen-container textarea.modern-input {
+    min-height: 100px;
+    resize: vertical;
+}
+
+.haccgen-container label {
+    font-weight: 500;
+    color: #333;
+    margin-bottom: 5px;
+    font-family: 'Roboto', sans-serif;
+    font-size: 1rem;
+}
+
+.haccgen-container .icon-upload {
+    font-size: 1.3rem;
+    color: #0069cc;
+}
+
+/* ======================================================
+   Tag Input
+   ====================================================== */
+
+.haccgen-container .tag-input-wrapper {
+    position: relative;
+}
+
+.haccgen-container .tag-container {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 0;
+    min-height: 44px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+    background: lightgrey;
+}
+
+.haccgen-container .tag {
+    background: grey;
+    border-radius: 16px;
+    padding: 4px 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9rem;
+    color: #fff;
+    animation: haccgen-popIn 0.3s ease;
+}
+
+.haccgen-container .tag:hover {
+    background: #0056b3;
+}
+
+.haccgen-container .tag .remove-tag {
+    cursor: pointer;
+    color: white;
+    font-weight: bold;
+}
+
+.haccgen-container .tag-input {
+    border: none !important;
+    outline: none !important;
+    width: 100%;
+    background: transparent !important;
+}
+.haccgen-container .haccgen-preview-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9rem;
+    color: #6c757d;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 4px;
+    margin-bottom: 12px;
+}
+/* ======================================================
+   Buttons
+   ====================================================== */
+
+.haccgen-container .modern-btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 500;
+    font-family: 'Roboto', sans-serif;
+    transition: background 0.3s ease, transform 0.3s ease;
+    color: #fff;
+}
+
+.haccgen-container .modern-btn-secondary {
+    background: #6c757d;
+    border: none;
+}
+
+.haccgen-container .modern-btn-secondary:hover {
+    background: #5a6268;
+}
+
+.haccgen-container .modern-btn-primary {
+    background: #0069cc;
+    border: none;
+}
+
+.haccgen-container .modern-btn-primary:hover {
+    background: #0056b3;
+}
+
+/* ======================================================
+   Errors
+   ====================================================== */
+
+.haccgen-container .error {
+    color: #ff4d4d;
+    font-size: 0.9em;
+}
+
+/* ======================================================
+   Animations (Namespaced to avoid conflicts)
+   ====================================================== */
+
+@keyframes haccgen-popIn {
+    from {
+        opacity: 0;
+        transform: scale(0.5);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes haccgen-slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
