@@ -50,6 +50,7 @@ $string['audience'] = 'Audience';
 $string['back'] = 'Back';
 $string['basics'] = 'Basics';
 $string['beginner'] = 'Beginner';
+$string['cachedef_sessiondata'] = 'Session data cache for Haccgen plugin';
 $string['cancel'] = 'Cancel';
 $string['clicksubtopiccontent'] = 'Click on a subtopic to view its content.';
 $string['completion_both'] = 'Completion: View Slides and Pass Quiz';
@@ -192,6 +193,39 @@ $string['please_select'] = 'Please select a valid option.';
 $string['pluginname'] = 'HACC Gen';
 $string['previewtitle'] = 'Preview';
 $string['privacy:metadata'] = 'The HACCGEN local plugin does not store any personal data.';
+
+$string['privacy:metadata:external'] =
+    'The plugin sends prompts to an external AI service to generate course content.';
+
+$string['privacy:metadata:external:content'] =
+    'Course prompts and instructions sent to the AI service.';
+
+$string['privacy:metadata:local_haccgen_content'] =
+    'Stores generated course content snapshots.';
+
+$string['privacy:metadata:local_haccgen_content:courseid'] =
+    'Course ID where the generated content belongs.';
+
+$string['privacy:metadata:local_haccgen_content:userid'] =
+    'User who generated the content snapshot.';
+
+$string['privacy:metadata:local_haccgen_contentlog'] =
+    'Stores logs of generated content created by the plugin.';
+
+$string['privacy:metadata:local_haccgen_contentlog:courseid'] =
+    'Course ID associated with the generated content.';
+
+$string['privacy:metadata:local_haccgen_contentlog:userid'] =
+    'User who generated the content.';
+
+$string['privacy:metadata:local_haccgen_job'] =
+    'Stores background job data for the AI course generator.';
+
+$string['privacy:metadata:local_haccgen_job:courseid'] =
+    'Course ID related to the job.';
+
+$string['privacy:metadata:local_haccgen_job:userid'] =
+    'The ID of the user who initiated the job.';
 $string['proceed'] = 'Proceed';
 $string['processing'] = 'The job is still being processed. Please wait.';
 $string['provider_desc'] = 'Choose which AI provider to use for course generation.';
