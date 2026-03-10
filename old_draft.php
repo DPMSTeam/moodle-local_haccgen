@@ -47,7 +47,7 @@ require_capability('local/haccgen:manage', $context);
 
 $PAGE->set_url(new moodle_url('/local/haccgen/old_draft.php', ['id' => $courseid]));
 $PAGE->set_context($context);
-$PAGE->set_title(get_string('loaddraft', 'local_haccgen', 'Load Previous Draft'));
+$PAGE->set_title(get_string('loaddraft', 'local_haccgen'));
 $PAGE->set_heading(format_string($course->fullname));
 
 if (!function_exists('normalise_title')) {
@@ -203,8 +203,7 @@ if ($selectedbatchid !== '' && $action === 'delete') {
         get_string(
             'draftdeletedsuccess',
             'local_haccgen',
-            'Draft deleted successfully.',
-        ),
+            ),
         2
     );
 }
@@ -226,7 +225,7 @@ if ($selectedbatchid !== '' && $action === 'load') {
     if (!$row) {
         redirect(
             new moodle_url('/local/haccgen/old_draft.php', ['id' => $courseid]),
-            get_string('draftnotfound', 'local_haccgen', 'Draft not found.'),
+            get_string('draftnotfound', 'local_haccgen'),
             2
         );
     }
@@ -533,7 +532,6 @@ if (empty($drafts)) {
         get_string(
             'nodraftsfound',
             'local_haccgen',
-            'No draft content found for this course.',
         ),
         \core\output\notification::NOTIFY_INFO
     );
@@ -569,8 +567,8 @@ echo html_writer::start_tag('div', ['class' => 'form-group']);
 
 echo html_writer::tag(
     'label',
-    get_string('selectdraft', 'local_haccgen', 'Select a Draft:'),
-    ['for' => 'batchid']
+    get_string('selectdraft', 'local_haccgen'),
+        ['for' => 'batchid']
 );
 
 echo html_writer::start_tag('select', [
@@ -604,8 +602,7 @@ echo html_writer::empty_tag('br');
 
 echo html_writer::tag(
     'button',
-    get_string('loaddraftbtn', 'local_haccgen', 'Load Draft'),
-    [
+    get_string('loaddraftbtn', 'local_haccgen'),    [
         'type' => 'submit',
         'name' => 'action',
         'value' => 'load',
@@ -617,13 +614,13 @@ echo ' ';
 
 echo html_writer::tag(
     'button',
-    get_string('deletedraftbtn', 'local_haccgen', 'Delete Draft'),
+    get_string('deletedraftbtn', 'local_haccgen'),
     [
         'type' => 'submit',
         'name' => 'action',
         'value' => 'delete',
         'class' => 'btn btn-danger',
-        'onclick' => "return confirm('" . get_string('areyousure') . "');",
+        'onclick' => "return confirm('" . get_string('areyousure', 'local_haccgen') . "');",
     ]
 );
 
