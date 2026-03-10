@@ -194,4 +194,5 @@ $string['step_details'] = 'विवरण';
 $string['step_finalize'] = 'अंतिम रूप दें';
 $string['step_progress'] = 'कोर्स निर्माण प्रगति';
 $string['step_review'] = 'समीक्षा';
-$string['subscription_url'] = 'सब्सक्रि_]()
+$string['subscription_url'] = 'सब्सक्रिप्शन URL';
+
