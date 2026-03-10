@@ -84,7 +84,7 @@ $payloadparts = 0;
 
 // Detect content-type and read raw body.
 $rawbody = file_get_contents('php://input');
-$contenttype = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
+$contenttype = isset($_SERVER['CONTENT_TYPE']) ? $_SERVER['CONTENT_TYPE'] : '';
 $contenttype = is_string($contenttype) ? $contenttype : '';
 
 if (is_string($rawbody) && $rawbody !== '') {
@@ -114,29 +114,6 @@ if (is_string($rawbody) && $rawbody !== '') {
                 $key = "payload_{$i}";
                 if (!empty($postdata[$key]) && is_string($postdata[$key])) {
                     $buf .= $postdata[$key];
-                }
-            }
-            $payloadraw = $buf;
-        }
-    }
-}
-
-// C) Fallback to normal POST variables (common in Moodle forms/AJAX).
-// This avoids PARAM_RAW by using $_POST directly and then validating strictly below.
-if ($payloadraw === '' && !empty($_POST)) {
-    if (isset($_POST['payload']) && is_string($_POST['payload']) && $_POST['payload'] !== '') {
-        $payloadraw = $_POST['payload'];
-    } else {
-        $payloadparts = isset($_POST['payloadparts']) ? (int)$_POST['payloadparts'] : 0;
-        if ($payloadparts > 0) {
-            if ($payloadparts > 50) {
-                throw new moodle_exception('invalidjson', 'local_haccgen', '', 'Too many payload parts');
-            }
-            $buf = '';
-            for ($i = 1; $i <= $payloadparts; $i++) {
-                $key = "payload_{$i}";
-                if (isset($_POST[$key]) && is_string($_POST[$key])) {
-                    $buf .= $_POST[$key];
                 }
             }
             $payloadraw = $buf;
