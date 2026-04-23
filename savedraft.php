@@ -137,12 +137,6 @@ if ($payloadraw === '') {
     throw new moodle_exception('invalidjson', 'local_haccgen', '', 'No canonical payload received');
 }
 
-// Optional: size limit (tune if needed; keeps DOS risk lower).
-$maxbytes = 1024 * 1024; // 1MB
-if (strlen($payloadraw) > $maxbytes) {
-    throw new moodle_exception('invalidjson', 'local_haccgen', '', 'Payload too large');
-}
-
 // Strict JSON parse.
 try {
     $payload = json_decode($payloadraw, true, 512, JSON_THROW_ON_ERROR);
