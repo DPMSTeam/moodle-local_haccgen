@@ -109,7 +109,6 @@ if (!$haccgendata || !is_object($haccgendata)) {
 
 $hasdraft = $DB->record_exists('local_haccgen_content', [
     'courseid' => $courseid,
-    'userid' => $USER->id,
 ]);
 
 $errors = [];
@@ -279,6 +278,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
         ];
         $validtones = ['Formal', 'Conversational', 'Engaging'];
         $validlanguages = ['English', 'Hindi'];
+        $validsummary = ['yes', 'no'];  // ADD THIS LINE.
         $mintopics = 2;
         $maxtopics = 10;
 
@@ -297,6 +297,10 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
             $errors['courseduration'] = get_string('please_select', 'local_haccgen');
         }
 
+        $data->coursesummary = required_param('coursesummary', PARAM_ALPHA);
+        if (!in_array($data->coursesummary, $validsummary)) {
+            $errors['coursesummary'] = get_string('please_select', 'local_haccgen');
+        }
         $data->courselanguage = required_param('courselanguage', PARAM_TEXT);
         if (!in_array($data->courselanguage, $validlanguages)) {
             $errors['courselanguage'] = get_string('please_select', 'local_haccgen');
@@ -332,6 +336,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
         $data->courselanguage = $haccgendata->courselanguage ?? 'English';
         $data->pdf_reference_url = $haccgendata->pdf_reference_url ?? '';
         $data->numberoftopics = $haccgendata->numberoftopics ?? 5;
+        $data->coursesummary = $haccgendata->coursesummary ?? 'no';
         $data->activelang = $activelang;
     } else if ($step == 4) {
         $data->coursename = $haccgendata->TOPICTITLE ?? '';
@@ -347,6 +352,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
         $data->pdf_reference_url = $haccgendata->pdf_reference_url ?? '';
         $data->courselanguage = $haccgendata->courselanguage ?? 'English';
         $data->numberoftopics = $haccgendata->numberoftopics ?? 5;
+        $data->coursesummary = $haccgendata->coursesummary ?? 'no';
         $data->activelang = $activelang;
     }
 
@@ -367,6 +373,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
         $haccgendata->customprompt = $data->customprompt ?? '';
         $haccgendata->pdf_reference_url = $data->pdf_reference_url ?? '';
         $haccgendata->activelang = $activelang;
+        $haccgendata->coursesummary = $data->coursesummary ?? 'no';  // ADD THIS LINE.
         \local_haccgen\session_store::set('haccgen_data', $haccgendata);
 
         // Keep $isdraft updated from POST.
@@ -395,6 +402,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                                 'courseduration' => $haccgendata->courseduration ?? 'Less than 15 minutes',
                                 'numberoftopics' => $haccgendata->numberoftopics ?? 5,
                                 'case_study_data' => $haccgendata->case_study_data ?? null,
+                                'coursesummary' => $haccgendata->coursesummary ?? 'no',
                             ],
                         ],
                         JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
@@ -655,47 +663,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                 // Normalise to match your creation loop expectations.
                 $topics = [];
                 foreach ($payloadarr['topics'] as $t) {
-                    $topic = [
-                        'title'     => (string)($t['title'] ?? 'Untitled Topic'),
-                        'subtopics' => [],
-                    ];
-                    foreach ((array)($t['subtopics'] ?? []) as $s) {
-                        $stitle = (string)($s['title'] ?? 'Untitled Subtopic');
-                        $content = $s['content'] ?? [];
-                        if (!is_array($content)) {
-                            $content = [
-                                'text' => (string) $content,
-                                'itemid' => 0,
-                            ];
-                        }
-                        $topic['subtopics'][] = [
-                            'title'   => $stitle,
-                            'content' => [
-                                'text'   => (string)($content['text'] ?? ''),
-                                'itemid' => (int)($content['itemid'] ?? 0),
-                            ],
-                        ];
-                    }
-                    if (!empty($t['quiz'])) {
-                        $q = $t['quiz'];
-                        $topic['quiz_included'] = 1;
-                        $topic['quiz_data'] = [
-                            'quiz_title'   => (string)($q['quiz_title'] ?? $topic['title']),
-                            'instructions' => (string)($q['instructions'] ?? ''),
-                            'questions'    => array_values(array_map(function ($qq, $i) {
-                                return [
-                                    'question_id'    => $qq['question_id'] ?? 'q' . ($i + 1),
-                                    'type'           => $qq['type'] ?? 'multiple_choice',
-                                    'difficulty'     => $qq['difficulty'] ?? 'easy',
-                                    'question'       => (string)($qq['question'] ?? ''),
-                                    'options'        => array_values(array_map('strval', (array)($qq['options'] ?? []))),
-                                    'correct_answer' => (string)($qq['correct_answer'] ?? ($qq['answer'] ?? '')),
-                                    'explanation'    => (string)($qq['explanation'] ?? ''),
-                                ];
-                            }, (array)($q['questions'] ?? []), array_keys((array)($q['questions'] ?? [])))),
-                        ];
-                    }
-                    $topics[] = $topic;
+                    $topics[] = \local_haccgen\outline_helper::parse_payload_topic((array)$t);
                 }
                 $log('USING_PAYLOAD_TOPICS', ['topics_total' => count($topics)]);
 
@@ -717,8 +685,9 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                 // Create sections, pages, and quizzes from the payload.
                 foreach ($topics as $topic) {
                     $topicname = $topic['title'] ?? 'Untitled Topic';
-                    $subtopics = $topic['subtopics'] ?? [];
-                    if (empty($subtopics)) {
+                    $outline = \local_haccgen\outline_helper::get_creation_sequence($topic);
+                    $pagesubtopiccount = \local_haccgen\outline_helper::count_page_subtopics($topic);
+                    if ($pagesubtopiccount === 0) {
                         $log('ERROR topic has no subtopics', ['topic' => $topicname]);
                         throw new moodle_exception('nosubtopics', 'local_haccgen', '', 'No subtopics found for this topic.');
                     }
@@ -726,8 +695,9 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                     $log('Creating section for topic', [
                         'topic' => $topicname,
                         'sectionnumber' => $sectionnumber,
-                        'subtopics' => count($subtopics),
+                        'subtopics' => $pagesubtopiccount,
                         'quiz_included' => !empty($topic['quiz_included']),
+                        'outline_items' => count($outline),
                     ]);
 
                     $section   = course_create_section($courseid, $sectionnumber);
@@ -739,299 +709,283 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                         $log('WARN section creation returned empty id', ['sectionnumber' => $sectionnumber]);
                     }
 
-                    // Pages for each subtopic.
-                    foreach ($subtopics as $sub) {
-                        $subtopicname = $sub['title'] ?? 'Untitled Subtopic';
-                        $editor = $sub['content'] ?? '';
-                        if (!is_array($editor)) {
-                            $editor = ['text' => (string)$editor, 'itemid' => 0];
-                        }
-                        $draftid = (int)($editor['itemid'] ?? 0);
-                        $html    = $editor['text'] ?? '';
+                    // Pages and quizzes in user-defined outline order.
+                    foreach ($outline as $outlineitem) {
+                        if (($outlineitem['type'] ?? '') === 'page') {
+                            $sub = $outlineitem['sub'] ?? [];
+                            if (\local_haccgen\outline_helper::is_quiz_item((array)$sub)) {
+                                continue;
+                            }
+                            $subtopicname = $sub['title'] ?? 'Untitled Subtopic';
+                            $editor = $sub['content'] ?? '';
+                            if (!is_array($editor)) {
+                                $editor = ['text' => (string)$editor, 'itemid' => 0];
+                            }
+                            $draftid = (int)($editor['itemid'] ?? 0);
+                            $html    = $editor['text'] ?? '';
 
-                        $log('Creating page module', [
-                            'subtopic' => $subtopicname,
-                            'draftid' => $draftid,
-                            'html_len' => strlen((string) $html),
-                        ]);
+                            $log('Creating page module', [
+                                'subtopic' => $subtopicname,
+                                'draftid' => $draftid,
+                                'html_length' => strlen($html),
+                            ]);
 
-                        $page                = new stdClass();
-                        $page->course        = $courseid;
-                        $page->name          = $subtopicname;
-                        $page->content       = '';
-                        $page->contentformat = FORMAT_HTML;
-                        $page->intro         = '';
-                        $page->introformat   = FORMAT_HTML;
-                        $page->timemodified  = time();
-                        $page->id            = $DB->insert_record('page', $page);
+                            $page                = new stdClass();
+                            $page->course        = $courseid;
+                            $page->name          = $subtopicname;
+                            $page->content       = '';
+                            $page->contentformat = FORMAT_HTML;
+                            $page->intro         = '';
+                            $page->introformat   = FORMAT_HTML;
+                            $page->timemodified  = time();
+                            $page->id            = $DB->insert_record('page', $page);
 
-                        $cm                 = new stdClass();
-                        $cm->course         = $courseid;
-                        $cm->module         = $module->id;
-                        $cm->instance       = $page->id;
-                        $cm->section        = $sectionnumber;
-                        $cm->visible        = 1;
-                        $cm->groupmode      = 0;
-                        $cm->groupingid     = 0;
-                        $cm->added          = time();
-                        $cm->id             = add_course_module($cm);
-                        course_add_cm_to_section($courseid, $cm->id, $sectionnumber);
+                            $cm                 = new stdClass();
+                            $cm->course         = $courseid;
+                            $cm->module         = $module->id;
+                            $cm->instance       = $page->id;
+                            $cm->section        = $sectionnumber;
+                            $cm->visible        = 1;
+                            $cm->groupmode      = 0;
+                            $cm->groupingid     = 0;
+                            $cm->added          = time();
+                            $cm->id             = add_course_module($cm);
+                            course_add_cm_to_section($courseid, $cm->id, $sectionnumber);
 
-                        $log('Page CM created and added to section', [
-                            'cmid' => $cm->id,
-                            'pageid' => $page->id,
-                        ]);
+                            $log('Page CM created and added to section', [
+                                'cmid' => $cm->id,
+                                'pageid' => $page->id,
+                            ]);
 
-                        $cmcontext  = context_module::instance($cm->id);
-                        $editoropts = [
-                            'maxfiles' => 100,
-                            'context' => $cmcontext,
-                            'subdirs' => 0,
-                        ];
+                            $cmcontext  = context_module::instance($cm->id);
+                            $editoropts = [
+                                'maxfiles' => 100,
+                                'context' => $cmcontext,
+                                'subdirs' => 0,
+                            ];
 
-                        $fs        = get_file_storage();
-                        $userctx   = context_user::instance($USER->id);
-                        $coursectx = context_course::instance($courseid);
+                            $fs        = get_file_storage();
+                            $userctx   = context_user::instance($USER->id);
+                            $coursectx = context_course::instance($courseid);
 
-                        // 1) Import any draftfile.php links directly into this page.
-                        $draftpattern =
+                            // 1) Import any draftfile.php links directly into this page.
+                            $draftpattern =
                             '~draftfile\.php/(\d+)/user/draft/(\d+)(/[^"\']*)?/([^"\'>\s]+)~i';
 
-                        if (preg_match_all($draftpattern, (string) $html, $m, PREG_SET_ORDER)) {
-                            foreach ($m as $hit) {
-                                $srcctxid = (int) $hit[1];
-                                $draftid  = (int) $hit[2];
-                                $filepath = isset($hit[3]) && $hit[3] !== '' ? $hit[3] : '/';
+                            if (preg_match_all($draftpattern, (string) $html, $m, PREG_SET_ORDER)) {
+                                foreach ($m as $hit) {
+                                    $srcctxid = (int) $hit[1];
+                                    $draftid  = (int) $hit[2];
+                                    $filepath = isset($hit[3]) && $hit[3] !== '' ? $hit[3] : '/';
 
-                                if ($filepath[0] !== '/') {
-                                    $filepath = '/' . $filepath;
-                                }
-                                if (substr($filepath, -1) !== '/') {
-                                    $filepath .= '/';
-                                }
+                                    if ($filepath[0] !== '/') {
+                                        $filepath = '/' . $filepath;
+                                    }
+                                    if (substr($filepath, -1) !== '/') {
+                                        $filepath .= '/';
+                                    }
 
-                                $filename = $hit[4];
-                                $src = $fs->get_file(
+                                    $filename = $hit[4];
+                                    $src = $fs->get_file(
                                     $srcctxid,
                                     'user',
                                     'draft',
                                     $draftid,
                                     $filepath,
                                     $filename
-                                );
+                                    );
 
-                                if ($src) {
-                                    if (!$fs->file_exists(
+                                    if ($src) {
+                                        if (!$fs->file_exists(
                                         $cmcontext->id,
                                         'mod_page',
                                         'content',
                                         0,
                                         '/',
                                         $filename
-                                    )) {
-                                        $fs->create_file_from_storedfile([
+                                        )) {
+                                            $fs->create_file_from_storedfile([
                                             'contextid' => $cmcontext->id,
                                             'component' => 'mod_page',
                                             'filearea' => 'content',
                                             'itemid' => 0,
                                             'filepath' => '/',
                                             'filename' => $filename,
-                                        ], $src);
-                                    }
+                                            ], $src);
+                                        }
 
-                                    $full = '~(?<=["\'])https?://[^"\']*draftfile\.php/'
+                                        $full = '~(?<=["\'])https?://[^"\']*draftfile\.php/'
                                         . $srcctxid . '/user/draft/' . $draftid
                                         . preg_quote($filepath, '~')
                                         . preg_quote($filename, '~')
                                         . '(?:\?[^"\']*)?(?=["\'])~i';
 
-                                    $html = preg_replace(
+                                        $html = preg_replace(
                                         $full,
                                         '@@PLUGINFILE@@/' . $filename,
                                         $html
-                                    );
+                                        );
 
-                                    $log('PAGE.DRAFT_IMPORT.OK', [
-                                        'filename' => $filename,
-                                        'from_ctx' => $srcctxid,
-                                        'draftid' => $draftid,
-                                    ]);
-                                } else {
-                                    $log('PAGE.DRAFT_IMPORT.MISS', [
+                                        $log('PAGE.DRAFT_IMPORT.OK', [
+                                            'filename' => $filename,
+                                            'from_ctx' => $srcctxid,
+                                            'draftid' => $draftid,
+                                        ]);
+                                    } else {
+                                        $log('PAGE.DRAFT_IMPORT.MISS', [
                                         'ctx' => $srcctxid,
                                         'draftid' => $draftid,
                                         'filepath' => $filepath,
                                         'filename' => $filename,
-                                    ]);
+                                        ]);
+                                    }
                                 }
                             }
-                        }
-
-                        // 2) Import placeholders (optional improvement).
-                        // Try to find a matching file in plugin stash local_haccgen/uploads (itemid = $courseid).
-                        // If you emit data-image-filename="actual_name.png", we’ll use that first.
-                        $sourcefiles = $fs->get_area_files(
+                            // 2) Import placeholders (optional improvement).
+                            // Try to find a matching file in plugin stash local_haccgen/uploads (itemid = $courseid).
+                            // If you emit data-image-filename="actual_name.png", we’ll use that first.
+                            $sourcefiles = $fs->get_area_files(
                             $coursectx->id,
                             'local_haccgen',
                             'uploads',
                             $courseid,
                             'id',
                             false
-                        );
-
-                        $indexbyname = [];
-                        foreach ($sourcefiles as $sf) {
-                            $indexbyname[mb_strtolower($sf->get_filename())] = $sf;
-                        }
-
-                        // Normaliser for loose matching (your keys contain colons/underscores).
-                        $normalise = function ($s) {
-                            $s = html_entity_decode($s, ENT_QUOTES | ENT_HTML401, 'UTF-8');
-                            $s = mb_strtolower($s);
-                            $s = str_replace([' ', ':', '/', '\\'], '_', $s);
-                            $s = preg_replace('~[^a-z0-9_]+~', '_', $s);
-                            $s = preg_replace('~_+~', '_', $s);
-                            return trim($s, '_');
-                        };
-
-                        $placeholderpattern =
+                            );
+                            $indexbyname = [];
+                            foreach ($sourcefiles as $sf) {
+                                $indexbyname[mb_strtolower($sf->get_filename())] = $sf;
+                            }
+                            // Normaliser for loose matching (your keys contain colons/underscores).
+                                $normalise = function ($s) {
+                                    $s = html_entity_decode($s, ENT_QUOTES | ENT_HTML401, 'UTF-8');
+                                    $s = mb_strtolower($s);
+                                    $s = str_replace([' ', ':', '/', '\\'], '_', $s);
+                                    $s = preg_replace('~[^a-z0-9_]+~', '_', $s);
+                                    $s = preg_replace('~_+~', '_', $s);
+                                    return trim($s, '_');
+                                };
+                            $placeholderpattern =
                             '~<div[^>]*class=["\']?[^"\']*image-placeholder[^"\']*["\']?[^>]*'
                             . 'data-image(?:-filename)?=["\']([^"\']+)["\'][^>]*>.*?</div>~is';
-
-                        if (preg_match_all(
+                            if (preg_match_all(
                             $placeholderpattern,
                             (string) $html,
                             $hits,
                             PREG_SET_ORDER
-                        )) {
-                            // Build a loose index of plugin-stash files by "stem".
-                            $indexbystem = [];
-                            foreach ($sourcefiles as $sf) {
-                                $stem = preg_replace('~\.[^.]+$~', '', $sf->get_filename());
-                                $indexbystem[$normalise($stem)] = $sf;
-                            }
-
-                            foreach ($hits as $ph) {
-                                // Key could be a filename (best) or your "topic-section" key.
-                                $key = $ph[1];
-                                $src = null;
-
-                                $cand = mb_strtolower($key);
-                                if (isset($indexbyname[$cand])) {
-                                    $src = $indexbyname[$cand];
+                            )) {
+                                // Build a loose index of plugin-stash files by "stem".
+                                $indexbystem = [];
+                                foreach ($sourcefiles as $sf) {
+                                    $stem = preg_replace('~\.[^.]+$~', '', $sf->get_filename());
+                                    $indexbystem[$normalise($stem)] = $sf;
                                 }
+                                foreach ($hits as $ph) {
+                                    // Key could be a filename (best) or your "topic-section" key.
+                                    $key = $ph[1];
+                                    $src = null;
 
-                                if (!$src) {
-                                    $nkey = $normalise(preg_replace('~\.[^.]+$~', '', $key));
-                                    $src  = $indexbystem[$nkey] ?? null;
-                                }
-
-                                if (!$src) {
-                                    foreach ($sourcefiles as $sf) {
-                                        if (stripos($sf->get_filename(), $key) !== false) {
-                                            $src = $sf;
-                                            break;
+                                    $cand = mb_strtolower($key);
+                                    if (isset($indexbyname[$cand])) {
+                                        $src = $indexbyname[$cand];
+                                    }
+                                    if (!$src) {
+                                        $nkey = $normalise(preg_replace('~\.[^.]+$~', '', $key));
+                                        $src  = $indexbystem[$nkey] ?? null;
+                                    }
+                                    if (!$src) {
+                                        foreach ($sourcefiles as $sf) {
+                                            if (stripos($sf->get_filename(), $key) !== false) {
+                                                $src = $sf;
+                                                break;
+                                            }
                                         }
                                     }
-                                }
+                                    if (!$src) {
+                                        $log('PAGE.PLACEHOLDER.SOURCE_NOT_FOUND', ['key' => $key]);
+                                        continue;
+                                    }
+                                    $filename = $src->get_filename();
+                                    if (!$fs->file_exists(
+                                        $cmcontext->id,
+                                        'mod_page',
+                                        'content',
+                                        0,
+                                        '/',
+                                     $filename
+                                     )) {
+                                         $fs->create_file_from_storedfile([
+                                            'contextid' => $cmcontext->id,
+                                            'component' => 'mod_page',
+                                            'filearea' => 'content',
+                                            'itemid' => 0,
+                                            'filepath' => '/',
+                                            'filename' => $filename,
+                                         ], $src);
+                                    }
+                                    // Swap placeholder to IMG.
+                                    $img = '<p><img src="@@PLUGINFILE@@/' . s($filename) . '" alt="" /></p>';
+                                    $html = str_replace($ph[0], $img, $html);
 
-                                if (!$src) {
-                                    $log('PAGE.PLACEHOLDER.SOURCE_NOT_FOUND', ['key' => $key]);
-                                    continue;
-                                }
-
-                                $filename = $src->get_filename();
-                                if (!$fs->file_exists(
-                                    $cmcontext->id,
-                                    'mod_page',
-                                    'content',
-                                    0,
-                                    '/',
-                                    $filename
-                                )) {
-                                    $fs->create_file_from_storedfile([
-                                        'contextid' => $cmcontext->id,
-                                        'component' => 'mod_page',
-                                        'filearea' => 'content',
-                                        'itemid' => 0,
-                                        'filepath' => '/',
-                                        'filename' => $filename,
-                                    ], $src);
-                                }
-
-                                // Swap placeholder to IMG.
-                                $img = '<p><img src="@@PLUGINFILE@@/' . s($filename) . '" alt="" /></p>';
-                                $html = str_replace($ph[0], $img, $html);
-
-                                $log('PAGE.PLACEHOLDER.REPLACED', [
+                                    $log('PAGE.PLACEHOLDER.REPLACED', [
                                     'key' => $key,
                                     'filename' => $filename,
-                                ]);
+                                    ]);
+                                }
                             }
-                        }
-
-                        $html = preg_replace(
+                            $html = preg_replace(
                             '~([?&])(token|expires)=[^"&\']+~i',
                             '$1',
                             (string) $html
-                        );
-                        $html = preg_replace('~[?&]+$~', '', (string) $html);
-
-                        // Save rewritten HTML.
-                        $page->content = $html;
-                        $DB->update_record('page', $page);
-
-                        $finalfiles = $fs->get_area_files(
+                            );
+                            $html = preg_replace('~[?&]+$~', '', (string) $html);
+                            // Save rewritten HTML.
+                            $page->content = $html;
+                            $DB->update_record('page', $page);
+                            $finalfiles = $fs->get_area_files(
                             $cmcontext->id,
                             'mod_page',
                             'content',
                             0,
                             'id',
                             false
-                        );
-
-                        $log('PAGE.FINAL_FILES', array_map(function ($f) {
-                            return [
+                            );
+                            $log('PAGE.FINAL_FILES', array_map(function ($f) {
+                                return [
                                 'filename' => $f->get_filename(),
                                 'size' => $f->get_filesize(),
-                            ];
-                        }, $finalfiles));
+                                ];
+                            }, $finalfiles));
 
-                        $fs = get_file_storage();
-                        $files = $fs->get_area_files(
+                            $fs = get_file_storage();
+                            $files = $fs->get_area_files(
                             $cmcontext->id,
                             'mod_page',
                             'content',
                             0,
                             'id',
                             false
-                        );
-
-                        if (!$files) {
-                            $log('ERROR_NO_FILES_SAVED_FOR_PAGE', [
+                            );
+                            if (!$files) {
+                                $log('ERROR_NO_FILES_SAVED_FOR_PAGE', [
                                 'cmid' => $cm->id,
                                 'subtopic' => $subtopicname,
-                            ]);
-                        }
+                                ]);
+                            }
+                            $log('Page content updated', ['pageid' => $page->id]);
+                        } else if (($outlineitem['type'] ?? '') === 'quiz' && !empty($outlineitem['quiz_data'])) {
+                            $quizdata = $outlineitem['quiz_data'];
 
-                        $log('Page content updated', ['pageid' => $page->id]);
-                    }
-
-                    // Quiz for topic (if any).
-                    if (!empty($topic['quiz_included']) && !empty($topic['quiz_data'])) {
-                        $quizdata     = $topic['quiz_data'];
-
-                        $log('QUIZ.CREATE_BEGIN', [
+                            $log('QUIZ.CREATE_BEGIN', [
                             'topic'            => $topicname,
                             'sectionnumber'    => $sectionnumber,
                             'quiz_title'       => $quizdata['quiz_title'] ?? 'Untitled Quiz',
                             'instructions_len' => strlen((string)($quizdata['instructions'] ?? '')),
                             'questions_count'  => count($quizdata['questions'] ?? []),
-                        ]);
-
-                        $quizmoduleid = $DB->get_field('modules', 'id', ['name' => 'quiz'], MUST_EXIST);
-                        if (!empty($quizmoduleid)) {
-                            $quizsettings = (object)[
+                            ]);
+                            $quizmoduleid = $DB->get_field('modules', 'id', ['name' => 'quiz'], MUST_EXIST);
+                            if (!empty($quizmoduleid)) {
+                                $quizsettings = (object)[
                                 'modulename'           => 'quiz',
                                 'module'               => $quizmoduleid,
                                 'course'               => $courseid,
@@ -1050,160 +1004,150 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                                 'timeclose'            => 0,
                                 'timelimit'            => 0,
                                 'quizpassword'         => '',
-                            ];
-
-                            $log('QUIZ.SETTINGS', [
+                                ];
+                                $log('QUIZ.SETTINGS', [
                                 'name'               => $quizsettings->name,
                                 'preferredbehaviour' => $quizsettings->preferredbehaviour,
                                 'grade'              => $quizsettings->grade,
                                 'sumgrades'          => $quizsettings->sumgrades,
                                 'questionsperpage'   => $quizsettings->questionsperpage,
-                            ]);
-
-                            $cmquiz = add_moduleinfo($quizsettings, $newcourse);
-                            $cmid   = is_object($cmquiz) && isset($cmquiz->coursemodule) ? (int)$cmquiz->coursemodule : 0;
-                            $quizid = is_object($cmquiz) && isset($cmquiz->instance) ? (int)$cmquiz->instance : 0;
-
-                            $log('QUIZ.ADDED', ['cmid' => $cmid, 'quizid' => $quizid, 'ok' => (bool)$quizid]);
-
-                            if ($quizid) {
-                                // Review settings.
-                                $okupdate = $DB->update_record('quiz', [
-                                    'id'                      => $quizid,
-                                    'reviewattempt'           => 69632,
-                                    'reviewcorrectness'       => 4096,
-                                    'reviewmaxmarks'          => 4096,
-                                    'reviewmarks'             => 4096,
-                                    'reviewspecificfeedback'  => 4096,
-                                    'reviewgeneralfeedback'   => 4096,
-                                    'reviewrightanswer'       => 4096,
-                                    'reviewoverallfeedback'   => 4096,
                                 ]);
-                                $log('QUIZ.REVIEW_SETTINGS_UPDATED', ['quizid' => $quizid, 'ok' => (bool)$okupdate]);
 
-                                // Context & default category.
-                                // Context and default category.
-                                $realcm = get_coursemodule_from_instance(
+                                  $cmquiz = add_moduleinfo($quizsettings, $newcourse);
+                                  $cmid   = is_object($cmquiz) && isset($cmquiz->coursemodule) ? (int)$cmquiz->coursemodule : 0;
+                                  $quizid = is_object($cmquiz) && isset($cmquiz->instance) ? (int)$cmquiz->instance : 0;
+
+                                  $log('QUIZ.ADDED', ['cmid' => $cmid, 'quizid' => $quizid, 'ok' => (bool)$quizid]);
+                                if ($quizid) {
+                                    // Review settings.
+                                    $okupdate = $DB->update_record('quiz', [
+                                        'id'                      => $quizid,
+                                        'reviewattempt'           => 69632,
+                                        'reviewcorrectness'       => 4096,
+                                        'reviewmaxmarks'          => 4096,
+                                        'reviewmarks'             => 4096,
+                                        'reviewspecificfeedback'  => 4096,
+                                        'reviewgeneralfeedback'   => 4096,
+                                        'reviewrightanswer'       => 4096,
+                                        'reviewoverallfeedback'   => 4096,
+                                    ]);
+                                    $log('QUIZ.REVIEW_SETTINGS_UPDATED', ['quizid' => $quizid, 'ok' => (bool)$okupdate]);
+                                    // Context & default category.
+                                    // Context and default category.
+                                    $realcm = get_coursemodule_from_instance(
                                     'quiz',
                                     $quizid,
                                     $courseid,
                                     false,
                                     MUST_EXIST
-                                );
-                                $quiz = $DB->get_record('quiz', ['id' => $quizid], '*', MUST_EXIST);
-                                $quizctx = context_module::instance($realcm->id);
+                                    );
+                                    $quiz = $DB->get_record('quiz', ['id' => $quizid], '*', MUST_EXIST);
+                                    $quizctx = context_module::instance($realcm->id);
 
-                                $log('QUIZ.CONTEXT', [
+                                    $log('QUIZ.CONTEXT', [
                                     'cmid' => $realcm->id,
                                     'contextid' => $quizctx->id,
-                                ]);
+                                    ]);
+                                    $catobj = question_make_default_categories([$quizctx]);
+                                    if (!empty($catobj->id)) {
+                                        $catid = (int) $catobj->id;
+                                        $log('QUIZ.CATEGORY_READY', ['catid' => $catid]);
 
-                                $catobj = question_make_default_categories([$quizctx]);
-                                if (!empty($catobj->id)) {
-                                    $catid = (int) $catobj->id;
-                                    $log('QUIZ.CATEGORY_READY', ['catid' => $catid]);
+                                        // Import MCQ questions.
+                                        $qsaved = 0;
+                                        $qskipped = 0;
 
-                                    // Import MCQ questions.
-                                    $qsaved = 0;
-                                    $qskipped = 0;
-
-                                    foreach ($quizdata['questions'] as $index => $qdata) {
-                                        $qtypename = $qdata['type'] ?? 'multiple_choice';
-                                        if ($qtypename !== 'multiple_choice') {
-                                            $qskipped++;
-                                            $log('QUIZ.Q.SKIP_UNSUPPORTED', [
+                                        foreach ($quizdata['questions'] as $index => $qdata) {
+                                            $qtypename = $qdata['type'] ?? 'multiple_choice';
+                                            if ($qtypename !== 'multiple_choice') {
+                                                $qskipped++;
+                                                $log('QUIZ.Q.SKIP_UNSUPPORTED', [
                                                 'index' => $index,
                                                 'type' => $qtypename,
-                                            ]);
-                                            continue;
-                                        }
-
-                                        $options = $qdata['options'] ?? [];
-                                        $correctletter = $qdata['correct_answer'] ?? '';
-
-                                        $form = new stdClass();
-                                        $form->category = $catid;
-                                        $form->contextid = $quizctx->id;
-                                        $form->qtype = 'multichoice';
-                                        $form->name = $qdata['question'];
-                                        $form->questiontext = [
+                                                ]);
+                                                  continue;
+                                            }
+                                            $options = $qdata['options'] ?? [];
+                                            $correctletter = $qdata['correct_answer'] ?? '';
+                                            $form = new stdClass();
+                                            $form->category = $catid;
+                                            $form->contextid = $quizctx->id;
+                                            $form->qtype = 'multichoice';
+                                            $form->name = $qdata['question'];
+                                            $form->questiontext = [
                                             'text' => $qdata['question'],
                                             'format' => FORMAT_HTML,
-                                        ];
-                                        $form->generalfeedback = [
+                                            ];
+                                            $form->generalfeedback = [
                                             'text' => $qdata['explanation'] ?? '',
                                             'format' => FORMAT_HTML,
-                                        ];
-                                        $form->defaultmark = 1;
-                                        $form->penalty = 0.1;
-                                        $form->single = 1;
-                                        $form->shuffleanswers = 1;
-                                        $form->answernumbering = 'none';
-                                        $form->correctfeedback = ['text' => '', 'format' => FORMAT_HTML];
-                                        $form->partiallycorrectfeedback = ['text' => '', 'format' => FORMAT_HTML];
-                                        $form->incorrectfeedback = ['text' => '', 'format' => FORMAT_HTML];
-                                        $form->layout = 0;
-                                        $form->showstandardinstruction = 1;
-                                        $form->shownumcorrect = 1;
-                                        $form->answer = [];
-                                        $form->fraction = [];
-                                        $form->feedback = [];
+                                            ];
+                                            $form->defaultmark = 1;
+                                            $form->penalty = 0.1;
+                                            $form->single = 1;
+                                            $form->shuffleanswers = 1;
+                                            $form->answernumbering = 'none';
+                                            $form->correctfeedback = ['text' => '', 'format' => FORMAT_HTML];
+                                            $form->partiallycorrectfeedback = ['text' => '', 'format' => FORMAT_HTML];
+                                            $form->incorrectfeedback = ['text' => '', 'format' => FORMAT_HTML];
+                                            $form->layout = 0;
+                                            $form->showstandardinstruction = 1;
+                                            $form->shownumcorrect = 1;
+                                            $form->answer = [];
+                                            $form->fraction = [];
+                                            $form->feedback = [];
+                                            foreach ($options as $i => $optiontext) {
+                                                $letter = chr(65 + $i);
+                                                $iscorrect = strtoupper((string) $correctletter) === $letter;
 
-                                        foreach ($options as $i => $optiontext) {
-                                            $letter = chr(65 + $i);
-                                            $iscorrect = strtoupper((string) $correctletter) === $letter;
-
-                                            $form->answer[] = ['text' => $optiontext, 'format' => FORMAT_HTML];
-                                            $form->fraction[] = $iscorrect ? 1 : 0;
-                                            $form->feedback[] = [
+                                                $form->answer[] = ['text' => $optiontext, 'format' => FORMAT_HTML];
+                                                $form->fraction[] = $iscorrect ? 1 : 0;
+                                                $form->feedback[] = [
                                                 'text' => $iscorrect ? get_string('answercorrect', 'local_haccgen')
                                                     : get_string('answerincorrect', 'local_haccgen'),
                                                 'format' => FORMAT_HTML,
-                                            ];
-                                        }
-
-                                        try {
-                                            $qtype = question_bank::get_qtype('multichoice');
-                                            $question = $qtype->save_question(
+                                                ];
+                                            }
+                                            try {
+                                                $qtype = question_bank::get_qtype('multichoice');
+                                                $question = $qtype->save_question(
                                                 (object) ['category' => $catid, 'qtype' => 'multichoice'],
                                                 $form
-                                            );
-                                            quiz_add_quiz_question($question->id, $quiz);
+                                                  );
+                                                  quiz_add_quiz_question($question->id, $quiz);
 
-                                            $qsaved++;
-                                            $log('QUIZ.Q.SAVED', [
-                                                'index' => $index,
-                                                'questionid' => $question->id,
-                                            ]);
-                                        } catch (Exception $e) {
-                                            $qskipped++;
-                                            $log('QUIZ.Q.ERROR_SAVE', [
+                                                  $qsaved++;
+                                                  $log('QUIZ.Q.SAVED', [
+                                                  'index' => $index,
+                                                  'questionid' => $question->id,
+                                                  ]);
+                                            } catch (Exception $e) {
+                                                $qskipped++;
+                                                $log('QUIZ.Q.ERROR_SAVE', [
                                                 'index' => $index,
                                                 'message' => $e->getMessage(),
-                                            ]);
+                                                ]);
+                                            }
                                         }
-                                    }
-
-                                    $log('QUIZ.CREATE_SUMMARY', [
+                                        $log('QUIZ.CREATE_SUMMARY', [
                                         'quizid' => $quizid,
                                         'saved' => $qsaved,
                                         'skipped' => $qskipped,
-                                    ]);
+                                        ]);
+                                    } else {
+                                        $log('QUIZ.ERROR_NO_CATEGORY', ['contextid' => $quizctx->id]);
+                                    }
                                 } else {
-                                    $log('QUIZ.ERROR_NO_CATEGORY', ['contextid' => $quizctx->id]);
+                                    $log('QUIZ.ERROR_ADD_MODULEINFO_FAILED', ['topic' => $topicname]);
                                 }
-                            } else {
-                                $log('QUIZ.ERROR_ADD_MODULEINFO_FAILED', ['topic' => $topicname]);
-                            }
 
-                            $log('QUIZ.CREATE_END', ['topic' => $topicname]);
+                                $log('QUIZ.CREATE_END', ['topic' => $topicname]);
+                            }
                         }
                     }
-
                     $sectionnumber++;
                     $log('Finished topic section', ['next_sectionnumber' => $sectionnumber]);
                 }
-
                 rebuild_course_cache($courseid);
                 // Insert content snapshot and link timestamp to it.
                 $createdbatchid = uniqid('created_', true);
@@ -1366,7 +1310,9 @@ $formdata = [
     'courseduration' => isset($_POST['courseduration'])
         ? clean_param($_POST['courseduration'], PARAM_TEXT)
         : ($haccgendata->courseduration ?? ''),
-
+    'coursesummary' => isset($_POST['coursesummary'])
+        ? clean_param($_POST['coursesummary'], PARAM_ALPHA)
+        : ($haccgendata->coursesummary ?? 'no'),
     'description' => $haccgendata->description ?? '',
     'generationtype' => $haccgendata->generationtype ?? 'ai',
     'pdfuploaded' => $haccgendata->pdf_file ?? '',
@@ -1384,6 +1330,9 @@ $formdata = [
     'is_duration_10minutes' => ($haccgendata->courseduration ?? '') === 'Less than 10 minutes',
     'is_duration_15minutes' => ($haccgendata->courseduration ?? '') === 'Less than 15 minutes',
     'is_duration_30minutes' => ($haccgendata->courseduration ?? '') === 'Less than 30 minutes',
+    'has_coursesummary' => !empty($haccgendata->coursesummary),
+    'is_summary_yes' => ($haccgendata->coursesummary ?? '') === 'yes',
+    'is_summary_no' => ($haccgendata->coursesummary ?? '') === 'no',
     'courselanguage' => $haccgendata->courselanguage ?? 'English',
     'numberoftopics' => $haccgendata->numberoftopics ?? 5,
     'is_language_en' => ($haccgendata->courselanguage ?? '') === 'English',
@@ -1408,6 +1357,7 @@ if ($step == 3) {
     $data->customprompt = $haccgendata->customprompt ?? '';
     $data->courselanguage = $haccgendata->courselanguage ?? 'English';
     $data->numberoftopics = $haccgendata->numberoftopics ?? 5;
+    $data->coursesummary = $haccgendata->coursesummary ?? 'no';  // ADD THIS LINE.
     $data->pdf_reference_url = $haccgendata->pdf_reference_url ?? '';
 
 
@@ -1485,6 +1435,12 @@ if ($step == 3) {
                     'estimated_duration' => $subtopic['estimated_duration'] ?? '',
                     'learning_objectives' => $subtopic['learning_objectives'] ?? [],
                 ];
+                if (!empty($subtopic['is_summary_topic'])) {
+                    $topicdata['is_summary_topic'] = true;
+                }
+                if (!empty($subtopic['content_type'])) {
+                    $topicdata['content_type'] = $subtopic['content_type'];
+                }
 
                 return array_merge($topicdata, [
                     'is_first' => $index === 0,
@@ -1542,26 +1498,68 @@ if ($step == 3) {
         ]);
     }
 } else if ($step == 4) {
+    $justgenerated = optional_param('generated', 0, PARAM_INT);
+    $latestdraft = $DB->get_record_sql(
+        "SELECT * FROM {local_haccgen_content}
+         WHERE courseid = ?
+         AND userid = ?
+         AND status IN ('draft', 'autosaved')
+         ORDER BY timemodified DESC
+         LIMIT 1",
+        [$courseid, $USER->id]
+    );
+    if ($latestdraft && !empty($latestdraft->topicsjson)) {
+        $dbtopics = json_decode($latestdraft->topicsjson, true);
+        if (is_array($dbtopics) && !empty($dbtopics)) {
+            $haccgendata->topics = $dbtopics;
+            $formdata['topics'] = $dbtopics;
+            // Also restore quiz data if exists.
+            if (!empty($latestdraft->quizjson)) {
+                $dbquizzes = json_decode($latestdraft->quizjson, true);
+                if (is_array($dbquizzes)) {
+                    $haccgendata->quizjson = $dbquizzes;
+                    $quizzcontents = $dbquizzes; // For frontend.
+                }
+            }
+            \local_haccgen\session_store::set('haccgen_data', $haccgendata);
+        }
+    } else {
+        $formdata['topics'] = $haccgendata->topics ?? [];
+    }
+    if ($justgenerated) {
+        \core\notification::success(get_string('autosavedsuccess', 'local_haccgen'));
+    } else {
+        $recentautosave = $DB->get_record_sql(
+            "SELECT * FROM {local_haccgen_content}
+             WHERE courseid = ?
+             AND userid = ?
+             AND status = 'autosaved'
+             AND timemodified > ?
+             ORDER BY timemodified DESC
+             LIMIT 1",
+            [$courseid, $USER->id, time() - 30]
+        );
 
+        if ($recentautosave && !get_user_preferences('haccgen_autosave_notified_' . $courseid, false)) {
+            \core\notification::success(get_string('autosavedsuccess', 'local_haccgen'));
+            set_user_preference('haccgen_autosave_notified_' . $courseid, true);
+        }
+    }
     $loaddraft = optional_param('loaddraft', 0, PARAM_BOOL);
     if ($loaddraft) {
         $draftdata = \local_haccgen\session_store::get('haccgen_draft_data');
         if (!empty($draftdata) && is_array($draftdata)) {
             $haccgendata->topics = $draftdata['topics'] ?? [];
             $haccgendata->quizjson = $draftdata['quizzes'] ?? [];
-
-            // Persist merged data back to session cache.
             \local_haccgen\session_store::set('haccgen_data', $haccgendata);
-
-            // Remove draft cache after loading.
             \local_haccgen\session_store::delete('haccgen_draft_data');
         }
     }
     $formdata['topics'] = $haccgendata->topics ?? [];
-    // Content generation timing (set by consume_job when arriving from completed job).
+    // Content generation timing.
     if (
-        isset($haccgendata->last_content_generation_duration_seconds) &&
-        $haccgendata->last_content_generation_duration_seconds >= 0
+    isset($haccgendata->last_content_generation_duration_seconds)
+    && $haccgendata->last_content_generation_duration_seconds >= 0
     ) {
         $secs = (float) $haccgendata->last_content_generation_duration_seconds;
         $durationtext = ($secs >= 60)
@@ -1576,31 +1574,25 @@ if ($step == 3) {
             $durationtext
         );
     }
+    // PROCESS TOPICS (Build content maps).
     $subtopiccontentmap = [];
     $quizcontentmap = [];
     $learningobjectivesmap = [];
-
     $topics = $formdata['topics'] ?? [];
+    // I18n labels function.
     /**
-     * Return translated UI labels based on selected language.
+     * Returns translated labels for supported languages.
      *
-     * Provides course preview labels such as "About this course"
-     * and "Learning objectives" in supported languages.
-     *
-     * @param string $lang Selected language string.
-     * @return array Associative array of translated labels.
+     * @param string $lang Language name.
+     * @return array
      */
     function haccgen_i18n_labels(string $lang): array {
-
         $lang = trim($lang);
-
-        // Default English.
         $labels = [
             'about' => 'About this course',
             'learning_objectives_heading' => 'Learning objectives',
             'learning_objectives_prefix' => 'Learning objectives - ',
         ];
-
         switch ($lang) {
             case 'हिन्दी (Hindi)':
                 return [
@@ -1608,43 +1600,37 @@ if ($step == 3) {
                     'learning_objectives_heading' => 'सीखने के उद्देश्य',
                     'learning_objectives_prefix' => 'सीखने के उद्देश्य - ',
                 ];
-
             case 'తెలుగు (Telugu)':
                 return [
                     'about' => 'ఈ కోర్సు గురించి',
                     'learning_objectives_heading' => 'అభ్యాస లక్ష్యాలు',
                     'learning_objectives_prefix' => 'అభ్యాస లక్ష్యాలు - ',
                 ];
-
             case 'தமிழ் (Tamil)':
                 return [
                     'about' => 'இந்த பாடநெறி பற்றி',
                     'learning_objectives_heading' => 'கற்றல் நோக்கங்கள்',
                     'learning_objectives_prefix' => 'கற்றல் நோக்கங்கள் - ',
                 ];
-
             case 'ಕನ್ನಡ (Kannada)':
                 return [
                     'about' => 'ಈ ಕೋರ್ಸ್ ಬಗ್ಗೆ',
                     'learning_objectives_heading' => 'ಕಲಿಕೆಯ ಉದ್ದೇಶಗಳು',
                     'learning_objectives_prefix' => 'ಕಲಿಕೆಯ ಉದ್ದೇಶಗಳು - ',
                 ];
-
             case 'বাংলা (Bengali)':
                 return [
                     'about' => 'এই কোর্স সম্পর্কে',
                     'learning_objectives_heading' => 'শেখার উদ্দেশ্য',
                     'learning_objectives_prefix' => 'শেখার উদ্দেশ্য - ',
                 ];
-
-            case 'English':
             default:
                 return $labels;
         }
     }
     $lang = $haccgendata->activelang ?? 'English';
-
     $labels = haccgen_i18n_labels($lang);
+    // Process each topic.
     for ($t = 0; $t < count($topics); $t++) {
         $topic = $topics[$t];
         $processedsubtopics = [];
@@ -1652,20 +1638,21 @@ if ($step == 3) {
         $existingsubs = $topic['subtopics'] ?? [];
 
         foreach ($existingsubs as $s => $sub) {
+            if (\local_haccgen\outline_helper::is_quiz_item($sub)) {
+                $processedsubtopics[] = $sub;
+                continue;
+            }
             $displaytitle = $sub['title'] ?? "Untitled Subtopic";
-
             if (!empty($sub['learning_objectives'])) {
                 $objectives = array_map('strval', $sub['learning_objectives']);
                 $sub['json_learning_objectives'] = json_encode($objectives, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 $learningobjectivesmap[$displaytitle] = $objectives;
                 $topicobjectives = array_merge($topicobjectives, $objectives);
             }
-
             $contenthtml = $sub['content_html'] ?? ($sub['content']['text'] ?? '');
             if ($contenthtml === '') {
                 $contenthtml = '<p>' . get_string('nocontentavailable', 'local_haccgen') . '</p>';
             }
-
             $subtopiccontentmap[$displaytitle] = $contenthtml;
             $sub['content_html'] = $sub['content_html'] ?? $contenthtml;
             if (empty($sub['content']['text'])) {
@@ -1673,138 +1660,96 @@ if ($step == 3) {
             }
             $processedsubtopics[] = $sub;
         }
-
-        if (!empty($topicobjectives)) {
-            $topicobjectives = array_values(array_unique($topicobjectives));
-            $objectiveshtml = '<h4>' . $labels['learning_objectives_heading'] . '</h4><ul><li>' .
-                implode('</li><li>', $topicobjectives) .
-                '</li></ul>';
-
-            $wywltitle = $labels['learning_objectives_prefix'] . $topic['title'];
-            $wywlsub = [
-                'title' => $wywltitle,
-                'content_html' => $objectiveshtml,
-                'content' => ['text' => $objectiveshtml, 'itemid' => 0],
-                'json_learning_objectives' => json_encode($topicobjectives, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-            ];
-
-
-            array_unshift($processedsubtopics, $wywlsub);
-
-            $subtopiccontentmap[$wywltitle] = $objectiveshtml;
-        }
-
         $topic['subtopics'] = $processedsubtopics;
+        $topic['outline_items'] = \local_haccgen\outline_helper::build_outline_items_for_display($topic);
         $topics[$t] = $topic;
     }
-    $lang = $haccgendata->activelang ?? 'English';
     $formdata['topics'] = $topics;
-    $courselevelobjectives = $haccgendata->learning_objectives1 ?? [];
+    // ADD "ABOUT THIS COURSE" ONLY ON FRESH GENERATION.
     $abouttitle = $labels['about'] ?? 'About this course';
-
     $aboutexists = false;
-
-    // Check if About topic already exists (draft/user).
+    // Check if the about course already exists in the topics.
     if (!empty($formdata['topics']) && is_array($formdata['topics'])) {
-
         foreach ($formdata['topics'] as $t) {
-
-            if (
-                !empty($t['title']) &&
-                trim((string)$t['title']) === $abouttitle
-            ) {
-
+            if (!empty($t['title']) && trim((string)$t['title']) === $abouttitle) {
                 $aboutexists = true;
-
-                // Ensure editor map uses saved content.
                 $subs = $t['subtopics'] ?? [];
-
                 if (!empty($subs[0]['content_html'])) {
-                    $subtopiccontentmap[$abouttitle] =
-                        $subs[0]['content_html'];
+                    $subtopiccontentmap[$abouttitle] = $subs[0]['content_html'];
                 }
-
                 break;
             }
         }
     }
-
-    // Only generate preview if About does NOT exist.
-    if (!$aboutexists && !empty($courselevelobjectives)) {
-
-        // Build objectives HTML.
+    // Determine if this is a fresh generation from consume_job.php.
+    $isfreshgeneration = !empty($haccgendata->isfreshgeneration) && $haccgendata->isfreshgeneration === true;
+    $alreadyaddedinsession = !empty($haccgendata->about_course_added);
+    // ONLY ADD if:.
+    // 1. This is a fresh generation (from consume_job.php).
+    // 2. We haven't already added it in this session.
+    // 3. It doesn't already exist in the topics array.
+    // 4. We have course-level learning objectives to display.
+    if ($isfreshgeneration && !$alreadyaddedinsession && !$aboutexists && !empty($haccgendata->learning_objectives1)) {
+        $courselevelobjectives = $haccgendata->learning_objectives1;
         if (is_array($courselevelobjectives)) {
-
             $courselevelcontent = '<ul>';
-
             foreach ($courselevelobjectives as $obj) {
-                $courselevelcontent .=
-                    '<li>' . htmlspecialchars($obj) . '</li>';
+                $courselevelcontent .= '<li>' . htmlspecialchars($obj) . '</li>';
             }
-
             $courselevelcontent .= '</ul>';
         } else {
-
-            $courselevelcontent =
-                htmlspecialchars((string)$courselevelobjectives);
+            $courselevelcontent = htmlspecialchars((string)$courselevelobjectives);
         }
-
         $previewcontext = [
             'TOPICTITLE' => $formdata['TOPICTITLE'] ?? '',
             'targetaudience' => $formdata['targetaudience'] ?? '',
             'levelofunderstanding' => $formdata['levelofunderstanding'] ?? '',
             'toneofnarrative' => $formdata['toneofnarrative'] ?? '',
             'courseduration' => $formdata['courseduration'] ?? '',
-            'pdfuploaded' => $formdata['pdfuploaded'] ?? '',
+            'coursesummary' => $formdata['coursesummary'] ?? 'no',
+         'pdfuploaded' => $formdata['pdfuploaded'] ?? '',
             'audiencetags' => $formdata['audiencetags'] ?? [],
             'objectives_html' => $courselevelcontent,
-            'learning_objectives_heading' =>
-            $labels['learning_objectives_heading']
-                ?? 'Learning objectives',
+            'learning_objectives_heading' => $labels['learning_objectives_heading'] ?? 'Learning objectives',
         ];
-
-        $previewhtml = $OUTPUT->render_from_template(
-            'local_haccgen/preview_course',
-            $previewcontext
-        );
-
+        $previewhtml = $OUTPUT->render_from_template('local_haccgen/preview_course', $previewcontext);
         $courseoverviewtopic = [
             'title' => $abouttitle,
             'subtopics' => [
-                [
-                    'title' => $abouttitle,
-                    'content_html' => $previewhtml,
-                    'content' => [
-                        'text' => $previewhtml,
-                        'itemid' => 0,
-                    ],
-                ],
+            [
+                'title' => $abouttitle,
+                'content_html' => $previewhtml,
+                'content' => ['text' => $previewhtml, 'itemid' => 0],
+                'examples' => [],
+            ],
+            ],
+            'outline_items' => [
+            [
+                'is_quiz' => false,
+                'title' => $abouttitle,
+            ],
             ],
         ];
-
         $subtopiccontentmap[$abouttitle] = $previewhtml;
-
         array_unshift($formdata['topics'], $courseoverviewtopic);
+        // Mark as added so we don't add again.
+        $haccgendata->about_course_added = true;
     }
-
-
-
+    // Clear the fresh generation flag after processing (prevents re-adding on page refresh).
+    if ($isfreshgeneration) {
+        $haccgendata->isfreshgeneration = false;
+    }
+    // Build quiz content map.
     $quizcontentmap = [];
     $quizlist = [];
     $quizindex = 0;
-
     foreach ($formdata['topics'] as $topicindex => $topic) {
-
-        // Handle both possible quiz structures.
         $quizdata1 = $topic['quiz_data'] ?? ($topic['quiz'] ?? null);
-
         if (!empty($quizdata1['quiz_title']) && !empty($quizdata1['questions'])) {
             $quiztitle = trim($quizdata1['quiz_title']);
             if ($quiztitle === '') {
                 $quiztitle = "Quiz " . ($quizindex + 1);
             }
-
-            // Build quiz content map.
             $questions = [];
             foreach ($quizdata1['questions'] as $q) {
                 $questions[] = [
@@ -1818,44 +1763,75 @@ if ($step == 3) {
                 'instructions' => $quizdata1['instructions'] ?? '',
                 'questions'    => $questions,
             ];
-
-            $quizid = "topic{$topicindex}_quiz";
-            $quizlist[] = [
-                'id'    => $quizid,
-                'title' => $quiztitle,
-            ];
-
+            $quizlist[] = ['id' => "topic{$topicindex}_quiz", 'title' => $quiztitle];
             $quizindex++;
         }
     }
-
-    $totalslides  = 0;
+    // Calculate totals.
+    $totalslides = 0;
     $totalquizzes = 0;
-
-    foreach ($formdata['topics'] as $topic) {
-        $subtopics = $topic['subtopics'] ?? [];
-        $totalslides += count($subtopics);
-
+    foreach ($formdata['topics'] as $topicindex => $topic) {
+        $totalslides += \local_haccgen\outline_helper::count_page_subtopics($topic);
         if (!empty($topic['quiz_data']['questions']) && count($topic['quiz_data']['questions']) > 0) {
             $totalquizzes++;
         } else if (!empty($topic['quiz']['questions']) && count($topic['quiz']['questions']) > 0) {
             $totalquizzes++;
         }
     }
-
     $coursehasquiz = $totalquizzes > 0;
-
-    $haccgendata = $haccgendata ?? new stdClass();
-
+    // Store SCORM metadata.
+    $haccgendata->scorm_meta = [
+        'total_slides'  => $totalslides,
+        'totalquizzes' => $totalquizzes,
+        'has_quiz'      => $coursehasquiz,
+        'quiz_list'     => $quizlist,
+    ];
+    $formdata['scorm_meta'] = $haccgendata->scorm_meta;
+    if (!empty($haccgendata->scorm_meta)) {
+        $meta = $haccgendata->scorm_meta;
+        $formdata['total_slides'] = $meta['total_slides'] ?? 0;
+        $formdata['totalquizzes'] = $meta['totalquizzes'] ?? 0;
+        $formdata['has_quiz'] = !empty($meta['has_quiz']);
+        $formdata['quiz_list'] = $meta['quiz_list'] ?? [];
+        $formdata['scorm_meta_json'] = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
     // Final JSON to pass to the template.
     $formdata['subtopicContentJson'] = json_encode($subtopiccontentmap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $formdata['quizContentJson'] = json_encode($quizcontentmap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    debugging('quizContentJson: ' . $formdata['quizContentJson']);
     $formdata['learningObjectiveJson'] = json_encode($learningobjectivesmap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $formdata['topicsjson'] = json_encode($formdata['topics'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    // HAMBURGER MENU DATA (CRITICAL - MUST BE AFTER TOPICS ARE FULLY PROCESSED).
+    $formdata['hamburger_enabled'] = true;
+    $formdata['course_fullname'] = $course->fullname;
+    $formdata['user_fullname'] = fullname($USER);
+    // THESE ARE THE MOST IMPORTANT - topics_for_menu is what your template uses.
+    foreach ($formdata['topics'] as $menutopicindex => &$menutopic) {
+        if (empty($menutopic['outline_items'])) {
+            $menutopic['outline_items'] = \local_haccgen\outline_helper::build_outline_items_for_display($menutopic);
+        }
+    }
+    unset($menutopic);
+    $formdata['topics_for_menu'] = $formdata['topics'];
+    $formdata['topics_json_for_menu'] = json_encode($formdata['topics'], JSON_UNESCAPED_UNICODE);
+    $formdata['topicsjson_for_menu'] = $formdata['topics_json_for_menu'];
+    // Pass content maps for editor.
+    $formdata['subtopic_content_json'] = $formdata['subtopicContentJson'];
+    $formdata['quiz_content_json'] = $formdata['quizContentJson'];
+    // Calculate stats for menu.
+    $totaltopics = count($formdata['topics']);
+    $totalsubtopics = 0;
+    $totalquizzes = 0;
+    foreach ($formdata['topics'] as $topic) {
+        $totalsubtopics += \local_haccgen\outline_helper::count_page_subtopics($topic);
+        if (!empty($topic['quiz_data']) || !empty($topic['quiz'])) {
+            $totalquizzes++;
+        }
+    }
+    $formdata['totaltopics'] = $totaltopics;
+    $formdata['totalsubtopics'] = $totalsubtopics;
+    $formdata['totalquizzes'] = $totalquizzes;
+    // END HAMBURGER MENU DATA.
 }
-
-
 $formdata['courseid'] = $courseid;
 $formdata['hasdraft'] = $hasdraft;
 
@@ -1863,34 +1839,32 @@ $formdata['TOPICTITLE_helpicon'] = [
     'text' => get_string('help_topictitle', 'local_haccgen'),
     'component' => 'local_haccgen',
 ];
-
 $formdata['targetaudience_helpicon'] = [
     'text' => get_string('help_targetaudience', 'local_haccgen'),
     'component' => 'local_haccgen',
 ];
-
 $formdata['description_helpicon'] = [
     'text' => get_string('help_description', 'local_haccgen'),
     'component' => 'local_haccgen',
 ];
-
 $formdata['pdfupload_helpicon'] = [
     'text' => get_string('help_pdfupload', 'local_haccgen'),
     'component' => 'local_haccgen',
 ];
-
 $formdata['levelofunderstanding_helpicon'] = [
     'text' => get_string('help_levelofunderstanding', 'local_haccgen'),
     'component' => 'local_haccgen',
 ];
-
 $formdata['toneofnarrative_helpicon'] = [
     'text' => get_string('help_toneofnarrative', 'local_haccgen'),
     'component' => 'local_haccgen',
 ];
-
 $formdata['courseduration_helpicon'] = [
     'text' => get_string('help_courseduration', 'local_haccgen'),
+    'component' => 'local_haccgen',
+];
+$formdata['coursesummary_helpicon'] = [  // ADD THIS SECTION.
+    'text' => get_string('help_coursesummary', 'local_haccgen'),
     'component' => 'local_haccgen',
 ];
 $formdata['statusmessage'] = $statusmessage;
@@ -1899,7 +1873,6 @@ $formdata['statusactive'] = $statusactive;
 $formdata['labels'] = $labels;
 $formdata['activelang'] = $lang;
 $formdata['sesskey'] = sesskey();
-
 echo $OUTPUT->header();
 if ($step == 1) {
     echo $OUTPUT->render_from_template('local_haccgen/ai_form', $formdata);

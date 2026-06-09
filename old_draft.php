@@ -24,6 +24,7 @@
 
 require_once(__DIR__ . '/../../config.php');
 
+use local_haccgen\outline_helper;
 use local_haccgen\session_store;
 
 
@@ -169,7 +170,6 @@ if ($selectedbatchid !== '' && ($action === 'load' || $action === 'delete')) {
     $owner = $DB->get_record(
         'local_haccgen_content',
         [
-            'userid' => $userid,
             'batchid' => $selectedbatchid,
             'status' => 'draft',
         ],
@@ -193,9 +193,8 @@ if ($selectedbatchid !== '' && $action === 'delete') {
 
     $DB->delete_records('local_haccgen_content', [
         'courseid' => $courseid,
-        'userid' => $userid,
         'batchid' => $selectedbatchid,
-        'status' => 'draft',
+        'status' => ['draft', 'autosaved'],
     ]);
 
     redirect(
@@ -213,13 +212,12 @@ if ($selectedbatchid !== '' && $action === 'delete') {
 if ($selectedbatchid !== '' && $action === 'load') {
     $row = $DB->get_record_sql(
         "SELECT *
-        FROM {local_haccgen_content}
-        WHERE courseid = :c
-        AND userid = :u
-        AND batchid = :b
-        AND status = 'draft'
-       ORDER BY timemodified DESC, timecreated DESC",
-        ['c' => $courseid, 'u' => $userid, 'b' => $selectedbatchid],
+    FROM {local_haccgen_content}
+    WHERE courseid = :c
+    AND batchid = :b
+    AND status IN ('draft', 'autosaved')
+    ORDER BY timemodified DESC, timecreated DESC",
+        ['c' => $courseid, 'b' => $selectedbatchid],
         IGNORE_MULTIPLE
     );
 
@@ -260,38 +258,18 @@ if ($selectedbatchid !== '' && $action === 'load') {
     $flatforui = [];  // Flat map for editor convenience.
 
     if ($isstructured) {
-        // New structured draft (no guessing).
+        // New structured draft — preserve page/quiz order from subtopics.
         foreach ($topicsdecoded as $tidx => $t) {
-            $title = $normstr($t['title'] ?? ('Topic ' . ($tidx + 1)));
-
-            $subtopics = [];
-            if (is_array($t['subtopics'] ?? null)) {
-                foreach ($t['subtopics'] as $s) {
-                    $san = $sanitizesubtopic($s);
-                    $subtopics[] = $san;
-
-                    // Flat map keyed by subtopic title (editor expects this).
-                    $flatforui[$san['title']] = $san['content'];
-                }
-            }
-
-            $topicrow = [
-                'title' => $title,
-                'subtopics' => $subtopics,
-            ];
-
-            $quizraw = $t['quiz_data'] ?? ($t['quiz'] ?? null);
-            $quiz = $sanitizequiz($quizraw, $title);
+            $topicrow = outline_helper::parse_payload_topic((array) $t);
+            $quiz = $topicrow['quiz_data'] ?? null;
 
             if ($quiz) {
                 if (($quiz['quiz_title'] ?? '') === '') {
-                    $quiz['quiz_title'] = $title;
+                    $quiz['quiz_title'] = $topicrow['title'] ?? ('Topic ' . ($tidx + 1));
                 }
-                $topicrow['quiz_included'] = 1;
-                $topicrow['quiz_data'] = $quiz;
                 $quizmapout[$quiz['quiz_title']] = $quiz;
             } else {
-                // If structured topics have no quiz_data but DB quizjson exists keyed by topic title, attach it.
+                $title = $normstr($topicrow['title'] ?? ('Topic ' . ($tidx + 1)));
                 $qfromdb = $quizdecoded[$title] ?? null;
                 if ($qfromdb) {
                     $quiz = $sanitizequiz($qfromdb, $title);
@@ -301,6 +279,13 @@ if ($selectedbatchid !== '' && $action === 'load') {
                         $quizmapout[$quiz['quiz_title']] = $quiz;
                     }
                 }
+            }
+
+            foreach ($topicrow['subtopics'] as $s) {
+                if (outline_helper::is_quiz_item($s)) {
+                    continue;
+                }
+                $flatforui[$s['title']] = $s['content'];
             }
 
             $topics[] = $topicrow;
@@ -511,16 +496,20 @@ if ($selectedbatchid !== '' && $action === 'load') {
 }
 
 // UI: list saved draft batches.
-$sql = "SELECT batchid,
-        MAX(timemodified) AS timemodified,
-        COUNT(*) AS cnt
-        FROM {local_haccgen_content}
-        WHERE courseid = :c
-         AND userid = :u
-        AND status = 'draft'
-    GROUP BY batchid
-    ORDER BY timemodified DESC";
-$params = ['c' => $courseid, 'u' => $userid];
+$sql = "SELECT lhc.batchid,
+        MAX(lhc.timemodified) AS timemodified,
+        COUNT(*) AS cnt,
+        u.firstname,
+        u.lastname,
+        lhc.status
+        FROM {local_haccgen_content} lhc
+        JOIN {user} u ON u.id = lhc.userid
+        WHERE lhc.courseid = :c
+        AND lhc.status IN ('draft', 'autosaved')
+        GROUP BY lhc.batchid, u.firstname, u.lastname, lhc.status
+        ORDER BY timemodified DESC";
+
+$params = ['c' => $courseid];
 $drafts = [];
 try {
     $drafts = $DB->get_records_sql($sql, $params);
@@ -587,9 +576,19 @@ echo html_writer::tag(
 );
 
 foreach ($drafts as $draft) {
-    $label = userdate($draft->timemodified) . " ({$draft->cnt})";
-    $attrs = ['value' => $draft->batchid];
+    $username = fullname((object)[
+        'firstname' => $draft->firstname,
+        'lastname' => $draft->lastname,
+    ]);
 
+    $statuslabel = '';
+    if ($draft->status === 'autosaved') {
+        $statuslabel = ' <span class="badge badge-info">Auto-saved</span>';
+    }
+    $label = userdate($draft->timemodified) . ' - by ' . $username .
+    ' (' . $draft->cnt . ')' . $statuslabel;
+
+    $attrs = ['value' => $draft->batchid];
     if ($draft->batchid === $selectedbatchid) {
         $attrs['selected'] = 'selected';
     }

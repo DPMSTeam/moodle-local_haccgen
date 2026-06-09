@@ -77,85 +77,444 @@ function local_haccgen_is_list(array $a): bool {
 }
 
 /**
- * Normalise service response into a list of topics.
+ * Recursively extract examples from content sections.
+ * This is CRITICAL for preserving examples.
+ *
+ * @param array $contentsections The content sections to extract examples from.
+ * @return array Extracted examples.
+ */
+function local_haccgen_extract_examples($contentsections): array {
+    $examples = [];
+    if (!is_array($contentsections)) {
+        return $examples;
+    }
+
+    foreach ($contentsections as $section) {
+        // Direct examples in the section.
+        if (!empty($section['examples']) && is_array($section['examples'])) {
+            $examples = array_merge($examples, $section['examples']);
+        }
+
+        // Check for examples in nested content.
+        if (!empty($section['content']) && is_array($section['content'])) {
+            if (!empty($section['content']['examples'])) {
+                $examples = array_merge($examples, $section['content']['examples']);
+            }
+        }
+
+        // Check for examples in generated_content.
+        if (!empty($section['generated_content']) && is_array($section['generated_content'])) {
+            if (!empty($section['generated_content']['examples'])) {
+                $examples = array_merge($examples, $section['generated_content']['examples']);
+            }
+            if (!empty($section['generated_content']['content_sections'])) {
+                $nestedexamples = local_haccgen_extract_examples(
+                    $section['generated_content']['content_sections']
+                );
+                $examples = array_merge($examples, $nestedexamples);
+            }
+        }
+    }
+
+    return array_unique($examples);
+}
+
+/**
+ * Normalise service response into a list of topics, PRESERVING ALL DATA including examples.
  *
  * @param mixed $result Decoded job result.
  * @param string $fallbacktitle Fallback title when wrapping subtopics.
- * @return array
+ * @return array Complete topics with preserved structure.
  */
-function local_haccgen_pick_topics($result, string $fallbacktitle = 'Content'): array {
+function local_haccgen_pick_topics_preserve_all($result, string $fallbacktitle = 'Content'): array {
+    // If the result already has the complete topics structure, return it as-is.
     if (is_array($result) && isset($result['topics']) && is_array($result['topics'])) {
-        return $result['topics'];
+        return local_haccgen_normalize_topics($result['topics']);
     }
+
     if (is_array($result) && isset($result['data']['topics']) && is_array($result['data']['topics'])) {
-        return $result['data']['topics'];
+        return local_haccgen_normalize_topics($result['data']['topics']);
     }
-    if (
-        is_array($result) &&
-        local_haccgen_is_list($result) &&
-        isset($result[0]['title']) &&
-        isset($result[0]['subtopics'])
-    ) {
-        return $result;
+
+    // Handle the structure from generate_content_for_topics.
+    if (is_array($result) && isset($result['results']) && is_array($result['results'])) {
+        $topics = [];
+        foreach ($result['results'] as $item) {
+            if (!empty($item['generated_content'])) {
+                $topic = [
+                    'title' => $item['generated_content']['topic_title'] ?? $fallbacktitle,
+                    'description' => $item['generated_content']['topic_description'] ?? '',
+                    'subtopics' => [],
+                    'quiz_data' => $item['quiz_data'] ?? null,
+                ];
+
+                // Extract content sections with examples.
+                if (!empty($item['generated_content']['content_sections'])) {
+                    foreach ($item['generated_content']['content_sections'] as $section) {
+                        $subtopic = [
+                            'title' => $section['section_title'] ?? 'Untitled Section',
+                            'content' => $section['content'] ?? '',
+                            'content_html' => $section['content'] ?? '',
+                            'examples' => $section['examples'] ?? [], // CRITICAL: Preserve examples.
+                        ];
+
+                        // Also preserve any additional metadata.
+                        if (!empty($section['learning_objectives'])) {
+                            $subtopic['learning_objectives'] = $section['learning_objectives'];
+                        }
+
+                        $topic['subtopics'][] = $subtopic;
+                    }
+                }
+
+                $topics[] = $topic;
+            }
+        }
+        return $topics;
     }
+
+    // Handle direct subtopics structure (from API).
     if (is_array($result) && isset($result['subtopics']) && is_array($result['subtopics'])) {
-        return [[
-            'title' => $fallbacktitle,
-            'subtopics' => array_map(function ($s) {
-                return is_array($s) ? $s : ['title' => 'Subtopic', 'content' => (string) $s];
-            }, $result['subtopics']),
-        ]];
+        $topics = [];
+        foreach ($result['subtopics'] as $subtopic) {
+            $topic = [
+                'title' => $subtopic['title'] ?? $fallbacktitle,
+                'subtopics' => [],
+            ];
+
+            // If this subtopic has its own content sections.
+            if (!empty($subtopic['content_sections'])) {
+                foreach ($subtopic['content_sections'] as $section) {
+                    $topic['subtopics'][] = [
+                        'title' => $section['section_title'] ?? 'Untitled',
+                        'content' => $section['content'] ?? '',
+                        'content_html' => $section['content'] ?? '',
+                        'examples' => $section['examples'] ?? [], // Preserve examples.
+                    ];
+                }
+            } else {
+                // Simple subtopic.
+                $topic['subtopics'][] = [
+                    'title' => $subtopic['title'] ?? 'Untitled',
+                    'content' => $subtopic['content'] ?? ($subtopic['description'] ?? ''),
+                    'content_html' => $subtopic['content'] ?? ($subtopic['description'] ?? ''),
+                    'examples' => $subtopic['examples'] ?? [], // Preserve examples.
+                ];
+            }
+
+            $topics[] = $topic;
+        }
+        return $topics;
     }
+
+    // Last resort: try to extract from raw array structure.
+    if (is_array($result) && local_haccgen_is_list($result)) {
+        return local_haccgen_normalize_topics($result);
+    }
+
     return [];
+}
+
+/**
+ * Normalize topics to ensure all fields are present, especially examples.
+ *
+ * @param array $topics The topics to normalize.
+ * @return array Normalized topics.
+ */
+function local_haccgen_normalize_topics(array $topics): array {
+    $normalized = [];
+    foreach ($topics as $topic) {
+        $normalizedtopic = [
+            'title' => $topic['title'] ?? 'Untitled Topic',
+            'description' => $topic['description'] ?? '',
+            'subtopics' => [],
+            'quiz_data' => $topic['quiz_data'] ?? ($topic['quiz'] ?? null),
+        ];
+
+        // Process subtopics.
+        if (!empty($topic['subtopics']) && is_array($topic['subtopics'])) {
+            foreach ($topic['subtopics'] as $subtopic) {
+                $normalizedsubtopic = [
+                    'title' => $subtopic['title'] ?? 'Untitled Subtopic',
+                    'content' => $subtopic['content'] ?? ($subtopic['content_html'] ?? ''),
+                    'content_html' => $subtopic['content_html'] ?? ($subtopic['content'] ?? ''),
+                    'examples' => $subtopic['examples'] ?? [], // CRITICAL: Keep examples.
+                ];
+
+                // Preserve learning objectives if present.
+                if (!empty($subtopic['learning_objectives'])) {
+                    $normalizedsubtopic['learning_objectives'] = $subtopic['learning_objectives'];
+                }
+
+                // Preserve any JSON-encoded learning objectives.
+                if (!empty($subtopic['json_learning_objectives'])) {
+                    $normalizedsubtopic['json_learning_objectives'] = $subtopic['json_learning_objectives'];
+                }
+
+                $normalizedtopic['subtopics'][] = $normalizedsubtopic;
+            }
+        }
+
+        // Also check for content_sections structure (alternative format).
+        if (!empty($topic['content_sections']) && empty($normalizedtopic['subtopics'])) {
+            foreach ($topic['content_sections'] as $section) {
+                $normalizedtopic['subtopics'][] = [
+                    'title' => $section['section_title'] ?? 'Untitled Section',
+                    'content' => $section['content'] ?? '',
+                    'content_html' => $section['content'] ?? '',
+                    'examples' => $section['examples'] ?? [], // Preserve examples.
+                ];
+            }
+        }
+
+        $normalized[] = $normalizedtopic;
+    }
+
+    return $normalized;
 }
 
 require_once($CFG->libdir . '/filelib.php');
 
-$logdir = $CFG->dataroot . '/temp/haccgen';
-check_dir_exists($logdir, true, true);
+// Single log file for all debugging.
+$logdir = $CFG->dataroot . '/local_haccgen';
+if (!is_dir($logdir)) {
+    @mkdir($logdir, 0770, true);
+}
+$logfile = $logdir . '/consume_job_debug.log';
 
-file_put_contents(
-    $logdir . '/consume_job_' . (int)$jobid . '.log',
-    "=== " . date('c') . " job {$job->id} ===\n" .
-        substr($resultraw ?: 'null', 0, 5000) . "\n\n",
-    FILE_APPEND | LOCK_EX
-);
+/**
+ * Write message to log file.
+ *
+ * @param string $message The log message.
+ * @param string $logfile Path to log file.
+ * @param int|null $jobid Optional job identifier.
+ * @return void
+ */
+function write_log($message, $logfile, $jobid = null) {
+    $prefix = $jobid ? "[Job {$jobid}]" : "";
+    $line = "[" . date('c') . "] {$prefix} {$message}\n";
+    @file_put_contents($logfile, $line, FILE_APPEND | LOCK_EX);
+}
+
+write_log("========== CONSUME_JOB STARTED ==========", $logfile, $jobid);
+write_log("Job ID: {$jobid}, Type: {$job->type}, Course: {$job->courseid}, User: {$USER->id}",
+    $logfile, $jobid);
 
 // Load session-scoped data (MUC).
 $haccgendata = session_store::get('haccgen_data');
 if (!$haccgendata || !is_object($haccgendata)) {
     $haccgendata = new stdClass();
+    write_log("Created new session data object", $logfile, $jobid);
+} else {
+    write_log("Loaded existing session data", $logfile, $jobid);
 }
 
 if ($job->type === 'topiccontent') {
-    $title = $haccgendata->TOPICTITLE ?? 'Content';
-    $topics = local_haccgen_pick_topics($result, $title);
+    write_log("Processing topiccontent job", $logfile, $jobid);
 
-    debugging(
-        "[local_haccgen][consume_job] job {$job->id} picked topics: " . count($topics),
-        DEBUG_DEVELOPER
-    );
+    $title = $haccgendata->TOPICTITLE ?? 'Content';
+
+    // Use the new preserve-all function.
+    $topics = local_haccgen_pick_topics_preserve_all($result, $title);
+
+    write_log("Picked " . count($topics) . " topics", $logfile, $jobid);
+
+    // Log examples count for debugging.
+    $totalexamples = 0;
+    foreach ($topics as $topicidx => $topic) {
+        $examplesintopic = 0;
+        foreach ($topic['subtopics'] ?? [] as $subtopic) {
+            if (!empty($subtopic['examples']) && is_array($subtopic['examples'])) {
+                $examplesintopic += count($subtopic['examples']);
+            }
+        }
+        write_log("Topic {$topicidx} '{$topic['title']}' has {$examplesintopic} examples",
+            $logfile, $jobid);
+        $totalexamples += $examplesintopic;
+    }
+    write_log("Total examples across all topics: {$totalexamples}", $logfile, $jobid);
 
     $haccgendata->topics = $topics;
-    // Store content generation timing for display on step 4.
-    $haccgendata->last_content_generation_duration_seconds = max(0, (int) $job->timemodified - (int) $job->timecreated);
-    $haccgendata->last_content_generation_completed_at = (int) $job->timemodified;
-    session_store::set('haccgen_data', $haccgendata);
 
+    // Also store raw result for debugging.
+    $haccgendata->last_raw_result = $result;
+
+    // Add these flags for fresh generation.
+    $haccgendata->is_fresh_generation = true;
+    $haccgendata->about_course_added = false;
+    write_log("Set is_fresh_generation = true, about_course_added = false", $logfile, $jobid);
+    // End flags.
+
+    // Store canonical payload for auto-save.
+    if (!empty($result)) {
+        $canonicalpayload = $result;
+
+        if (!isset($canonicalpayload['topics']) && !empty($topics)) {
+            $canonicalpayload = [
+                'topics' => $topics,
+                'meta' => [
+                    'TOPICTITLE' => $haccgendata->TOPICTITLE ?? '',
+                    'targetaudience' => $haccgendata->targetaudience ?? '',
+                    'description' => $haccgendata->description ?? '',
+                    'levelofunderstanding' => $haccgendata->levelofunderstanding ?? '',
+                    'toneofnarrative' => $haccgendata->toneofnarrative ?? '',
+                    'courseduration' => $haccgendata->courseduration ?? '',
+                    'courselanguage' => $haccgendata->courselanguage ?? '',
+                    'numberoftopics' => $haccgendata->numberoftopics ?? '',
+                    'activelang' => $haccgendata->activelang ?? '',
+                ],
+            ];
+        }
+
+        $haccgendata->canonical_payload = $canonicalpayload;
+        $haccgendata->canonical_payload_json = json_encode($canonicalpayload, JSON_UNESCAPED_UNICODE);
+
+        write_log("Stored canonical payload (" . strlen($haccgendata->canonical_payload_json) .
+            " bytes)", $logfile, $jobid);
+    }
+    // End store canonical payload.
+
+    // Auto-save to database (always create new record).
+    write_log("Starting auto-save process...", $logfile, $jobid);
+
+    if (!empty($topics)) {
+        try {
+            // Extract quiz data from topics.
+            $quizdata = [];
+            foreach ($topics as $topic) {
+                if (!empty($topic['quiz_data'])) {
+                    $quiztitle = $topic['quiz_data']['quiz_title'] ?? $topic['title'] ?? '';
+                    $quizdata[$quiztitle] = $topic['quiz_data'];
+                }
+            }
+
+            write_log("Extracted " . count($quizdata) . " quizzes", $logfile, $jobid);
+
+            // Log the structure of first topic to verify examples are included.
+            if (!empty($topics[0]['subtopics'][0])) {
+                $samplesubtopic = $topics[0]['subtopics'][0];
+                write_log("Sample subtopic structure: " . json_encode([
+                    'has_title' => isset($samplesubtopic['title']),
+                    'has_content' => isset($samplesubtopic['content']),
+                    'has_content_html' => isset($samplesubtopic['content_html']),
+                    'has_examples' => isset($samplesubtopic['examples']),
+                    'examples_count' => count($samplesubtopic['examples'] ?? []),
+                    'examples_sample' => array_slice($samplesubtopic['examples'] ?? [], 0, 2),
+                ], JSON_UNESCAPED_UNICODE), $logfile, $jobid);
+            }
+
+            // Always create a new record - don't check for existing.
+            $record = new stdClass();
+            $record->courseid = $job->courseid;
+            $record->userid = $USER->id;
+            $record->batchid = 'autosave_' . date('Ymd_His') . '_' . $job->courseid;
+            $record->status = 'autosaved';
+            $record->topicsjson = json_encode($topics, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            $record->quizjson = json_encode($quizdata, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            $record->timecreated = time();
+            $record->timemodified = time();
+
+            // Verify JSON encoding worked.
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                write_log("ERROR encoding topicsjson: " . json_last_error_msg(), $logfile, $jobid);
+                throw new Exception("JSON encoding failed: " . json_last_error_msg());
+            }
+
+            $recordid = $DB->insert_record('local_haccgen_content', $record);
+
+            write_log("✓ AUTO-SAVE CREATED! Record ID: {$recordid}, Topics: " . count($topics),
+                $logfile, $jobid);
+
+            // Verify the saved data contains examples by retrieving and checking.
+            $savedrecord = $DB->get_record('local_haccgen_content', ['id' => $recordid]);
+            if ($savedrecord) {
+                $savedtopics = json_decode($savedrecord->topicsjson, true);
+                $savedexamples = 0;
+                foreach ($savedtopics ?? [] as $t) {
+                    foreach ($t['subtopics'] ?? [] as $s) {
+                        $savedexamples += count($s['examples'] ?? []);
+                    }
+                }
+                write_log("VERIFICATION: Saved data has {$savedexamples} examples", $logfile, $jobid);
+            }
+
+            // Optional: Delete old auto-saves keeping only last 5.
+            $oldautosaves = $DB->get_records('local_haccgen_content', [
+                'courseid' => $job->courseid,
+                'userid' => $USER->id,
+                'status' => 'autosaved',
+            ], 'timecreated DESC', 'id', 5, 100); // Skip first 5, get the rest.
+
+            foreach ($oldautosaves as $old) {
+                $DB->delete_records('local_haccgen_content', ['id' => $old->id]);
+                write_log("Deleted old auto-save record ID: {$old->id} (keeping only last 5)",
+                    $logfile, $jobid);
+            }
+
+            // Count total records for this course/user.
+            $totalrecords = $DB->count_records('local_haccgen_content', [
+                'courseid' => $job->courseid,
+                'userid' => $USER->id,
+                'status' => 'autosaved',
+            ]);
+            write_log("Total auto-save records after cleanup: {$totalrecords}", $logfile, $jobid);
+
+            // Set session flag.
+            $autosavekey = 'haccgen_autosaved_step4_' . $job->courseid;
+            $_SESSION[$autosavekey] = true;
+
+            // Store latest auto-save info in session.
+            $haccgendata->last_autosave_id = $recordid;
+            $haccgendata->last_autosave_batchid = $record->batchid;
+            $haccgendata->last_autosave_time = time();
+            $haccgendata->last_autosave_examples_count = $totalexamples;
+
+        } catch (Exception $e) {
+            write_log("✗ AUTO-SAVE ERROR: " . $e->getMessage(), $logfile, $jobid);
+            write_log("Error trace: " . $e->getTraceAsString(), $logfile, $jobid);
+        }
+    } else {
+        write_log("✗ AUTO-SAVE SKIPPED: No topics data", $logfile, $jobid);
+    }
+    // End auto-save.
+
+    // Store content generation timing for display on step 4.
+    $haccgendata->last_content_generation_duration_seconds = max(0,
+        (int) $job->timemodified - (int) $job->timecreated);
+    $haccgendata->last_content_generation_completed_at = (int) $job->timemodified;
+
+    write_log("Generation duration: {$haccgendata->last_content_generation_duration_seconds} seconds",
+        $logfile, $jobid);
+
+    session_store::set('haccgen_data', $haccgendata);
+    write_log("Session data saved", $logfile, $jobid);
+
+    write_log("Redirecting to step 4", $logfile, $jobid);
+    write_log("========== CONSUME_JOB COMPLETED ==========", $logfile, $jobid);
+
+    // In consume_job.php, change the redirect to.
     redirect(new moodle_url('/local/haccgen/manage.php', [
         'id' => $job->courseid,
         'step' => 4,
+        'generated' => 1,
+        'autosave_id' => $recordid,  // Pass the auto-save ID.
     ]));
 }
 
 if ($job->type === 'subtopics') {
+    write_log("Processing subtopics job", $logfile, $jobid);
+
     $haccgendata->raw_subtopics = $result['subtopics'] ?? [];
     session_store::set('haccgen_data', $haccgendata);
+
+    write_log("Redirecting to step 3", $logfile, $jobid);
+    write_log("========== CONSUME_JOB COMPLETED ==========", $logfile, $jobid);
 
     redirect(new moodle_url('/local/haccgen/manage.php', [
         'id' => $job->courseid,
         'step' => 3,
     ]));
 }
+
 throw new moodle_exception('unknownjobtype', 'local_haccgen');
 

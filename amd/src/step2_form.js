@@ -25,6 +25,7 @@
 
 export const init = () => {
     // Run only on step 2
+    // console.log('STEP2 INIT RUNNING');
     const stepInput = document.querySelector('input[name="step"]');
     if (!stepInput || stepInput.value !== '2') {
         return;
@@ -34,10 +35,12 @@ export const init = () => {
     const levelSelect = document.getElementById('levelofunderstanding');
     const toneSelect = document.getElementById('toneofnarrative');
     const durationSelect = document.getElementById('courseduration');
+    const summarySelect = document.getElementById('coursesummary');
 
     const previewLevel = document.getElementById('preview-level-value');
     const previewTone = document.getElementById('preview-tone-value');
     const previewDuration = document.getElementById('preview-duration-value');
+    const previewSummary = document.getElementById('preview-summary-value');
 
     const animateUpdate = (el, value, delay = 0) => {
         if (!el) {
@@ -56,6 +59,13 @@ export const init = () => {
         animateUpdate(previewLevel, levelSelect?.value, 0);
         animateUpdate(previewTone, toneSelect?.value, 0.2);
         animateUpdate(previewDuration, durationSelect?.value, 0.4);
+        // Get the display text for course summary
+        let summaryDisplay = 'Not selected';
+        if (summarySelect && summarySelect.selectedIndex >= 0) {
+            const selectedOption = summarySelect.options[summarySelect.selectedIndex];
+            summaryDisplay = selectedOption ? selectedOption.text : 'Not selected';
+        }
+        animateUpdate(previewSummary, summaryDisplay, 0.6);
     };
 
     // Initial render
@@ -65,6 +75,7 @@ export const init = () => {
     levelSelect?.addEventListener('change', updatePreview);
     toneSelect?.addEventListener('change', updatePreview);
     durationSelect?.addEventListener('change', updatePreview);
+    summarySelect?.addEventListener('change', updatePreview);
 
     // Spinner logic on submit
     const form = document.getElementById('haccgen-form');

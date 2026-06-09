@@ -68,7 +68,19 @@ Source: PostScript::ISOLatin1Encoding (Perl)
                         </select>
                         {{#errors.courseduration}}<span class="error">{{errors.courseduration}}</span>{{/errors.courseduration}}
                     </div>
-
+<!-- Course Summary Option -->
+<div class="form-group">
+    <div class="d-flex align-items-center">
+        <label for="coursesummary" class="mr-2">{{#str}}coursesummary, local_haccgen{{/str}}</label>
+        {{#coursesummary_helpicon}}{{> core/help_icon}}{{/coursesummary_helpicon}}
+    </div>
+    <select name="coursesummary" id="coursesummary" class="form-control modern-input" required>
+        <option value="" disabled {{^has_coursesummary}}selected{{/has_coursesummary}}>{{#str}}select_summary, local_haccgen{{/str}}</option>
+        <option value="yes" {{#is_summary_yes}}selected{{/is_summary_yes}}>{{#str}}yes, local_haccgen{{/str}}</option>
+        <option value="no" {{#is_summary_no}}selected{{/is_summary_no}}>{{#str}}no, local_haccgen{{/str}}</option>
+    </select>
+    {{#errors.coursesummary}}<span class="error">{{errors.coursesummary}}</span>{{/errors.coursesummary}}
+</div>
                      <!-- Course Language -->
 <!-- Hidden Course Language -->
 <input type="hidden" name="courselanguage" value="English">
@@ -138,6 +150,13 @@ Source: PostScript::ISOLatin1Encoding (Perl)
                         </p>
                         <p style="color: #666; font-size: 0.9rem;" id="preview-duration">
                             <strong>{{#str}}courseduration, local_haccgen{{/str}}:</strong> <span id="preview-duration-value">{{courseduration}}</span>
+                        </p>
+                        <p style="color: #666; font-size: 0.9rem;" id="preview-summary">
+                            <strong>{{#str}}coursesummary, local_haccgen{{/str}}:</strong> 
+                            <span id="preview-summary-value">
+                            {{#is_summary_yes}}{{#str}}yes, local_haccgen{{/str}}{{/is_summary_yes}}
+                            {{#is_summary_no}}{{#str}}no, local_haccgen{{/str}}{{/is_summary_no}}
+                             </span>
                         </p>
                         {{#pdfuploaded}}
                         <p id="preview-file" style="color: #666; font-size: 0.9rem;">

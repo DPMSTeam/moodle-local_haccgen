@@ -23,7 +23,6 @@
  */
 
 defined('MOODLE_INTERNAL') || die();
-
 $string['TOPICTITLE'] = 'Topic Title';
 $string['TOPICTITLE_help'] = 'The name of your course (e.g., Web Development 101).';
 $string['TOPICTITLE_placeholder'] = 'Enter topic title';
@@ -33,6 +32,7 @@ $string['addnewquizquestion'] = 'Add new quiz question';
 $string['addobjective_placeholder'] = 'Add objective...';
 $string['addtopic'] = 'Add More Topics';
 $string['advanced'] = 'Advanced';
+$string['alreadyautosaved'] = 'Content was already auto-saved.';
 $string['answercorrect'] = 'Correct!';
 $string['answerincorrect'] = 'Incorrect.';
 $string['apierror'] = 'Failed to generate content from the API: {$a}';
@@ -47,6 +47,7 @@ $string['apiurl'] = 'API URL';
 $string['apiurl_desc'] = 'Enter the base URL for the Moodle Content Platform API (e.g., https://your-api-gateway-url.execute-api.ap-south-1.amazonaws.com).';
 $string['areyousure'] = 'Are you sure you want to delete this draft?';
 $string['audience'] = 'Audience';
+$string['autosavedsuccess'] = 'Content has been automatically saved as draft.';
 $string['back'] = 'Back';
 $string['basics'] = 'Basics';
 $string['beginner'] = 'Beginner';
@@ -76,6 +77,7 @@ $string['courseduration_label'] = 'Duration';
 $string['courseisfor'] = 'This "{$a->title}" course is designed for {$a->audience}.';
 $string['courselanguage'] = 'Course Language';
 $string['courseoutline'] = 'Content Outline';
+$string['coursesummary'] = 'Generate Course Summary';
 $string['createhaccgen'] = 'Create AI Course from Form';
 $string['custom_prompt'] = 'Custom Prompt';
 $string['debuglogging'] = 'Enable Debug Logging';
@@ -174,6 +176,7 @@ $string['no_topics'] = 'No topics generated. Please go back and check your input
 $string['no_topics_error'] = 'No topics were generated or provided.';
 $string['no_topics_generated'] = 'No topics were generated. Please try again.';
 $string['noapiurl'] = 'API URL is not configured for the Moodle Content Platform.';
+$string['noautosavedata'] = 'No content available to auto-save.';
 $string['nocontent'] = 'No content available.';
 $string['nocontentavailable'] = 'No content available.';
 $string['nodraftsfound'] = 'No draft content found for this course.';
@@ -233,6 +236,7 @@ $string['sectioncreationfailed'] = 'Failed to create or update course sections: 
 $string['select_duration'] = 'Select duration';
 $string['select_language'] = 'Select a Language';
 $string['select_level'] = 'Select level';
+$string['select_summary'] = 'Select an option';
 $string['select_tone'] = 'Select tone';
 $string['selectdraft'] = 'Select a Draft:';
 $string['selectsubtopic'] = 'Select Subtopic to see content';
@@ -312,3 +316,6 @@ $string['untitledsubtopic'] = 'Untitled Subtopic';
 $string['upload_error'] = 'An error occurred while uploading the file.';
 $string['upload_pdf'] = 'Upload PDF';
 $string['yes'] = 'Yes';
+
+
+

@@ -26,6 +26,7 @@ require_once(__DIR__ . '/../../config.php');
 require_once($CFG->dirroot . '/local/haccgen/lib.php');
 
 use local_haccgen\session_store;
+use local_haccgen\outline_helper;
 
 global $DB, $CFG, $USER;
 
@@ -73,13 +74,13 @@ $log = function (string $label, $data = null, bool $pretty = false) use ($logfil
 
 $log('savedraft.START', ['step' => $step]);
 
- // Read payload without using PARAM_RAW.
+// Read payload without using PARAM_RAW.
 
- // Supports.
- // Application/json body (raw JSON in request body).
- // Application/x-www-form-urlencoded (payload=... or payloadparts + payload_1..n).
- // Fallback to $_POST (works for typical Moodle form posts).
- // Session fallback (your existing behaviour).
+// Supports.
+// Application/json body (raw JSON in request body).
+// Application/x-www-form-urlencoded (payload=... or payloadparts + payload_1..n).
+// Fallback to $_POST (works for typical Moodle form posts).
+// Session fallback (your existing behaviour).
 $payloadraw = '';
 $payloadparts = 0;
 
@@ -137,6 +138,7 @@ if ($payloadraw === '') {
     throw new moodle_exception('invalidjson', 'local_haccgen', '', 'No canonical payload received');
 }
 
+
 // Strict JSON parse.
 try {
     $payload = json_decode($payloadraw, true, 512, JSON_THROW_ON_ERROR);
@@ -160,6 +162,7 @@ try {
                 'courseduration' => 'courseduration',
                 'courselanguage' => 'courselanguage',
                 'numberoftopics' => 'numberoftopics',
+                'coursesummary' => 'coursesummary',
                 'activelang' => 'activelang',
                 'learning_objectives1' => 'learning_objectives1',
             ] as $sesskey => $metakey
@@ -197,6 +200,9 @@ $hasblobmediasrc = static function (string $html): bool {
 foreach ($payload['topics'] as $topicidx => $topic) {
     $subtopics = (array) ($topic['subtopics'] ?? []);
     foreach ($subtopics as $subidx => $subtopic) {
+        if (!is_array($subtopic) || outline_helper::is_quiz_item($subtopic)) {
+            continue;
+        }
         $content = $subtopic['content'] ?? [];
         $text = is_array($content) ? (string) ($content['text'] ?? '') : (string) $content;
         if ($hasblobmediasrc($text)) {
@@ -281,31 +287,11 @@ $kbase = [];
 $quizbytitle = [];
 
 foreach ($payload['topics'] as $tidx => $t) {
-    $title = $normstr($t['title'] ?? '') ?: ('Topic ' . ($tidx + 1));
-
-    $subs = [];
-    foreach ((array)($t['subtopics'] ?? []) as $s) {
-        $subs[] = $sanitizesubtopic($s);
-    }
-
-    $quizraw = $t['quiz_data'] ?? ($t['quiz'] ?? null);
-    $quiz = $sanitizequiz($quizraw, $title);
-
-    $row = [
-        'title' => $title,
-        'subtopics' => $subs,
-    ];
-
+    $row = outline_helper::parse_payload_topic((array)$t);
+    $quiz = $row['quiz_data'] ?? null;
     if ($quiz) {
-        if (($quiz['quiz_title'] ?? '') === '') {
-            $quiz['quiz_title'] = $title;
-        }
-
-        $row['quiz_included'] = 1;
-        $row['quiz_data'] = $quiz;
         $quizbytitle[$quiz['quiz_title']] = $quiz;
     }
-
     $kbase[] = $row;
 }
 
@@ -362,6 +348,9 @@ $log('DB.INSERT.draft', [
 $flatforui = [];
 foreach ($kbase as $t) {
     foreach ($t['subtopics'] as $s) {
+        if (outline_helper::is_quiz_item($s)) {
+            continue;
+        }
         $flatforui[$s['title']] = $s['content'];
     }
 }

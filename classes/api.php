@@ -115,37 +115,26 @@ class local_haccgen_api {
         $subscriptionurl = self::get_subscription_url();
         [$apikey, $apisecret] = self::get_api_credentials();
 
-        // Build base payload depending on whether PDF reference exists.
+        $coursedata = [
+            'title' => $data->coursename,
+            'audience' => $data->targetaudience,
+            'level' => $data->levelofunderstanding,
+            'tone' => $data->toneofnarrative,
+            'duration' => $data->courseduration,
+            'description' => $data->description ?? '',
+            'course_summary' => (($data->coursesummary ?? 'no') === 'yes'),
+        ];
+
         if (!empty($data->pdf_reference_url)) {
-            $payload = [
-                'action' => 'generate_subtopics',
-                'user_id' => $USER->id,
-                'provider' => $provider,
-                'course_data' => [
-                    'title' => $data->coursename,
-                    'audience' => $data->targetaudience,
-                    'level' => $data->levelofunderstanding,
-                    'tone' => $data->toneofnarrative,
-                    'duration' => $data->courseduration,
-                    'description' => $data->description ?? '',
-                    'pdf_reference_url' => $data->pdf_reference_url,
-                ],
-            ];
-        } else {
-            $payload = [
-                'action' => 'generate_subtopics',
-                'user_id' => $USER->id,
-                'provider' => $provider,
-                'course_data' => [
-                    'title' => $data->coursename,
-                    'audience' => $data->targetaudience,
-                    'level' => $data->levelofunderstanding,
-                    'tone' => $data->toneofnarrative,
-                    'duration' => $data->courseduration,
-                    'description' => $data->description ?? '',
-                ],
-            ];
+            $coursedata['pdf_reference_url'] = $data->pdf_reference_url;
         }
+
+        $payload = [
+            'action' => 'generate_subtopics',
+            'user_id' => $USER->id,
+            'provider' => $provider,
+            'course_data' => $coursedata,
+        ];
 
         // Attach subscription credentials and plugin identifier.
         $payload['api_key'] = $apikey;
@@ -280,7 +269,7 @@ class local_haccgen_api {
 
         $subtopicspayload = [];
         foreach ($topics as $topic) {
-            $subtopicspayload[] = [
+            $entry = [
                 'id' => $topic['id'] ?? uniqid('topic_'),
                 'title' => $topic['title'],
                 'description' => $topic['description'] ?? '',
@@ -297,6 +286,13 @@ class local_haccgen_api {
                 'include_quiz' => !empty($topic['has_quiz']),
                 'quiz_count' => !empty($topic['has_quiz']) ? (int) ($topic['quiz_question_count'] ?? 3) : 0,
             ];
+            if (!empty($topic['is_summary_topic'])) {
+                $entry['is_summary_topic'] = true;
+            }
+            if (!empty($topic['content_type'])) {
+                $entry['content_type'] = $topic['content_type'];
+            }
+            $subtopicspayload[] = $entry;
         }
 
         $coursedata = [
@@ -306,6 +302,7 @@ class local_haccgen_api {
             'audience' => $data->targetaudience,
             'duration' => $data->courseduration,
             'description' => $data->description ?? '',
+            'generate_summary' => $data->coursesummary ?? 'no',
             'learning_objectives' => array_values(
                 array_filter(
                     array_map(
@@ -315,6 +312,7 @@ class local_haccgen_api {
                 )
             ),
             'case_study_data' => $data->case_study_data,
+            'course_summary' => (($data->coursesummary ?? 'no') === 'yes'),
         ];
 
         if (!empty($data->pdf_reference_url)) {
@@ -532,7 +530,6 @@ class local_haccgen_api {
                         'content' => $sectioncontent,
                         'examples' => $examples,
                         'content_html' => $enhancedhtml,
-                        'learning_objectives' => $allobjectives,
                     ];
                 }
             }
@@ -719,6 +716,123 @@ class local_haccgen_api {
     }
 
     /**
+     * Pick the first numeric value for any of $keys across the root payload and nested data/result.
+     *
+     * @param array $decoded Parsed JSON root.
+     * @param array $keys Preferred key names (order preserved).
+     * @return float|int|null
+     */
+    private static function progress_pick_numeric(array $decoded, array $keys) {
+        $layers = [$decoded];
+        foreach (['data', 'result'] as $nested) {
+            if (isset($decoded[$nested]) && is_array($decoded[$nested])) {
+                $layers[] = $decoded[$nested];
+            }
+        }
+        foreach ($layers as $layer) {
+            foreach ($keys as $k) {
+                if (!array_key_exists($k, $layer)) {
+                    continue;
+                }
+                $v = $layer[$k];
+                if ($v === '' || $v === null) {
+                    continue;
+                }
+                if (is_numeric($v)) {
+                    return $v + 0;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Prefer a human status string from the payload (root or nested).
+     *
+     * @param array $decoded Parsed JSON root.
+     * @return string
+     */
+    private static function progress_pick_message(array $decoded): string {
+        $layers = [$decoded];
+        foreach (['data', 'result'] as $nested) {
+            if (isset($decoded[$nested]) && is_array($decoded[$nested])) {
+                $layers[] = $decoded[$nested];
+            }
+        }
+        foreach ($layers as $layer) {
+            foreach (['text', 'message', 'status_message'] as $k) {
+                if (isset($layer[$k]) && is_scalar($layer[$k])) {
+                    $s = trim((string) $layer[$k]);
+                    if ($s !== '') {
+                        return $s;
+                    }
+                }
+            }
+        }
+        foreach ($layers as $layer) {
+            if (isset($layer['phase']) && is_scalar($layer['phase'])) {
+                return (string) $layer['phase'];
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Forward subscription-manager progress to the task-registered reporter (if any).
+     *
+     * Expects optional completed_topics/total_topics (or aliases), optional progress percentage,
+     * and falls back topic total to the subtopics count passed as $topiccount.
+     *
+     * @param array $decoded Parsed JSON from initiate POST or polling POST.
+     * @param int $topiccount Topic count sent on initiate (fallback total).
+     * @return void
+     */
+    private static function maybe_report_progress_from_api_response(array $decoded, int $topiccount): void {
+        $cb = self::$progressreporter;
+        if ($cb === null || !is_callable($cb)) {
+            return;
+        }
+
+        $completedraw = self::progress_pick_numeric($decoded, [
+            'completed_topics', 'topics_completed', 'completed', 'done_topics',
+        ]);
+        $totalraw = self::progress_pick_numeric($decoded, [
+            'total_topics', 'topics_total', 'total', 'topics_count',
+        ]);
+
+        $completed = ($completedraw !== null) ? (int) $completedraw : null;
+        $total = ($totalraw !== null && (float) $totalraw > 0) ? (int) $totalraw : null;
+
+        if ($total === null && $topiccount > 0) {
+            $total = $topiccount;
+        }
+
+        $progressraw = self::progress_pick_numeric($decoded, ['progress', 'percent_complete', 'completion_percent']);
+        $pct = ($progressraw !== null) ? (int) round((float) $progressraw) : null;
+
+        if ($completed !== null && $total !== null && $total > 0) {
+            $pct = (int) round(100.0 * $completed / $total);
+        } else if ($pct !== null && $total !== null && $total > 0 && $completed === null) {
+            $completed = (int) max(0, min($total, (int) round($pct / 100.0 * $total)));
+        }
+
+        if ($pct === null) {
+            return;
+        }
+
+        if ($completed === null) {
+            $completed = 0;
+        }
+        if ($total === null || $total < 1) {
+            $total = max(1, $topiccount);
+        }
+
+        $msg = self::progress_pick_message($decoded);
+
+        call_user_func($cb, $pct, $msg, $completed, $total);
+    }
+
+    /**
      * JSON POST with polling for long-running generation.
      *
      * Preserves auth fields on each poll.
@@ -732,6 +846,8 @@ class local_haccgen_api {
 
         $pollintervalseconds = isset($CFG->haccgen_poll_interval) ? (int) $CFG->haccgen_poll_interval : 45;
         $maxwaitseconds = isset($CFG->haccgen_poll_max_wait) ? (int) $CFG->haccgen_poll_max_wait : (30 * 60);
+
+        $topiccount = (isset($data['subtopics']) && is_array($data['subtopics'])) ? count($data['subtopics']) : 0;
 
         // Logging helper.
         $logfile = $CFG->dataroot . '/post_json_via_curl.log';
@@ -1033,6 +1149,8 @@ class local_haccgen_api {
         $initialjson = json_encode($initial);
         $log("Initial decoded response: " . substr((string) $initialjson, 0, 800));
 
+        self::maybe_report_progress_from_api_response($initial, $topiccount);
+
         if (!empty($initial['download_url']) || (!empty($initial['phase']) && $initial['phase'] === 'completed')) {
             $downloadurl = $initial['download_url'] ?? null;
             if (!$downloadurl) {
@@ -1083,6 +1201,8 @@ class local_haccgen_api {
 
             $log("Polling status for request_id={$requestid}.");
             $status = $dopost($url, $payload);
+
+            self::maybe_report_progress_from_api_response($status, $topiccount);
 
             $phase = $status['phase'] ?? null;
             $stat = $status['status'] ?? null;
