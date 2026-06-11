@@ -37,6 +37,21 @@ class local_haccgen_api {
     protected static $progressreporter = null;
 
     /**
+     * Normalise course-summary choice for the remote API.
+     *
+     * The subscription manager expects the legacy yes/no strings (not booleans).
+     *
+     * @param mixed $value Session/form value (yes/no, true/false, etc.).
+     * @return string 'yes' or 'no'
+     */
+    private static function coursesummary_for_api($value): string {
+        if (is_bool($value)) {
+            return $value ? 'yes' : 'no';
+        }
+        return in_array(strtolower(trim((string) $value)), ['yes', 'true', '1'], true) ? 'yes' : 'no';
+    }
+
+    /**
      * Human-readable cURL error from Moodle's {@see \curl} wrapper.
      * Core exposes the message on the public property {@see \curl::$error}; there is no get_error() in standard Moodle.
      *
@@ -115,26 +130,42 @@ class local_haccgen_api {
         $subscriptionurl = self::get_subscription_url();
         [$apikey, $apisecret] = self::get_api_credentials();
 
-        $coursedata = [
+        // Build base payload depending on whether PDF reference exists.
+        // Build base payload depending on whether PDF reference exists.
+        if (!empty($data->pdf_reference_url)) {
+            $payload = [
+            'action' => 'generate_subtopics',
+            'user_id' => $USER->id,
+            'provider' => $provider,
+            'course_data' => [
             'title' => $data->coursename,
             'audience' => $data->targetaudience,
             'level' => $data->levelofunderstanding,
             'tone' => $data->toneofnarrative,
             'duration' => $data->courseduration,
             'description' => $data->description ?? '',
-            'course_summary' => (($data->coursesummary ?? 'no') === 'yes'),
-        ];
-
-        if (!empty($data->pdf_reference_url)) {
-            $coursedata['pdf_reference_url'] = $data->pdf_reference_url;
-        }
-
-        $payload = [
+            'pdf_reference_url' => $data->pdf_reference_url,
+            'generate_summary' => self::coursesummary_for_api($data->coursesummary ?? 'no'),
+            'number_of_topics' => (int) ($data->numberoftopics ?? 5),
+            ],
+            ];
+        } else {
+            $payload = [
             'action' => 'generate_subtopics',
             'user_id' => $USER->id,
             'provider' => $provider,
-            'course_data' => $coursedata,
-        ];
+            'course_data' => [
+            'title' => $data->coursename,
+            'audience' => $data->targetaudience,
+            'level' => $data->levelofunderstanding,
+            'tone' => $data->toneofnarrative,
+            'duration' => $data->courseduration,
+            'description' => $data->description ?? '',
+            'generate_summary' => self::coursesummary_for_api($data->coursesummary ?? 'no'),
+            'number_of_topics' => (int) ($data->numberoftopics ?? 5),
+            ],
+            ];
+        }
 
         // Attach subscription credentials and plugin identifier.
         $payload['api_key'] = $apikey;
@@ -167,6 +198,21 @@ class local_haccgen_api {
         if (!isset($response['subtopics'])) {
             throw new \moodle_exception('error', 'local_haccgen', '', 'No subtopics returned in API response');
         }
+
+        // Content service returns course_summary as a sibling field (not inside subtopics).
+        $coursesummary = self::coursesummary_for_api($data->coursesummary ?? 'no');
+        $response['subtopics'] = local_haccgen_merge_api_course_summary_into_subtopics(
+            $response,
+            $coursesummary
+        );
+        $response['subtopics'] = local_haccgen_ensure_course_summary_outline_topic(
+            $response['subtopics'],
+            $coursesummary
+        );
+        $response['subtopics'] = local_haccgen_move_course_summary_to_end(
+            $response['subtopics'],
+            $coursesummary
+        );
 
         // Sanitization recursive closure.
         $sanitize = function ($value) use (&$sanitize) {
@@ -269,7 +315,7 @@ class local_haccgen_api {
 
         $subtopicspayload = [];
         foreach ($topics as $topic) {
-            $entry = [
+            $subtopicspayload[] = [
                 'id' => $topic['id'] ?? uniqid('topic_'),
                 'title' => $topic['title'],
                 'description' => $topic['description'] ?? '',
@@ -283,16 +329,11 @@ class local_haccgen_api {
                     )
                 ),
                 'case_study_connection' => $topic['case_study_connection'] ?? null,
-                'include_quiz' => !empty($topic['has_quiz']),
-                'quiz_count' => !empty($topic['has_quiz']) ? (int) ($topic['quiz_question_count'] ?? 3) : 0,
+                'include_quiz' => !empty($topic['has_quiz']) && empty($topic['is_course_summary']),
+                'quiz_count' => (!empty($topic['has_quiz']) && empty($topic['is_course_summary']))
+                    ? (int) ($topic['quiz_question_count'] ?? 1)
+                    : 0,
             ];
-            if (!empty($topic['is_summary_topic'])) {
-                $entry['is_summary_topic'] = true;
-            }
-            if (!empty($topic['content_type'])) {
-                $entry['content_type'] = $topic['content_type'];
-            }
-            $subtopicspayload[] = $entry;
         }
 
         $coursedata = [
@@ -302,7 +343,7 @@ class local_haccgen_api {
             'audience' => $data->targetaudience,
             'duration' => $data->courseduration,
             'description' => $data->description ?? '',
-            'generate_summary' => $data->coursesummary ?? 'no',
+            'generate_summary' => self::coursesummary_for_api($data->coursesummary ?? 'no'),
             'learning_objectives' => array_values(
                 array_filter(
                     array_map(
@@ -312,7 +353,6 @@ class local_haccgen_api {
                 )
             ),
             'case_study_data' => $data->case_study_data,
-            'course_summary' => (($data->coursesummary ?? 'no') === 'yes'),
         ];
 
         if (!empty($data->pdf_reference_url)) {
@@ -530,6 +570,7 @@ class local_haccgen_api {
                         'content' => $sectioncontent,
                         'examples' => $examples,
                         'content_html' => $enhancedhtml,
+                        // Learning_objectives' => $allobjectives.
                     ];
                 }
             }

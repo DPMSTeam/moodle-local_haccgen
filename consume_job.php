@@ -23,6 +23,7 @@
  */
 
 require_once(__DIR__ . '/../../config.php');
+require_once($CFG->dirroot . '/local/haccgen/lib.php');
 
 use local_haccgen\session_store;
 
@@ -81,7 +82,7 @@ function local_haccgen_is_list(array $a): bool {
  * This is CRITICAL for preserving examples.
  *
  * @param array $contentsections The content sections to extract examples from.
- * @return array Extracted examples.
+ * @return array Array of extracted examples.
  */
 function local_haccgen_extract_examples($contentsections): array {
     $examples = [];
@@ -108,9 +109,7 @@ function local_haccgen_extract_examples($contentsections): array {
                 $examples = array_merge($examples, $section['generated_content']['examples']);
             }
             if (!empty($section['generated_content']['content_sections'])) {
-                $nestedexamples = local_haccgen_extract_examples(
-                    $section['generated_content']['content_sections']
-                );
+                $nestedexamples = local_haccgen_extract_examples($section['generated_content']['content_sections']);
                 $examples = array_merge($examples, $nestedexamples);
             }
         }
@@ -120,7 +119,7 @@ function local_haccgen_extract_examples($contentsections): array {
 }
 
 /**
- * Normalise service response into a list of topics, PRESERVING ALL DATA including examples.
+ * Normalise service response into a list of topics, preserving all data including examples.
  *
  * @param mixed $result Decoded job result.
  * @param string $fallbacktitle Fallback title when wrapping subtopics.
@@ -224,7 +223,7 @@ function local_haccgen_pick_topics_preserve_all($result, string $fallbacktitle =
 function local_haccgen_normalize_topics(array $topics): array {
     $normalized = [];
     foreach ($topics as $topic) {
-        $normalizedtopic = [
+        $normaltopic = [
             'title' => $topic['title'] ?? 'Untitled Topic',
             'description' => $topic['description'] ?? '',
             'subtopics' => [],
@@ -234,7 +233,7 @@ function local_haccgen_normalize_topics(array $topics): array {
         // Process subtopics.
         if (!empty($topic['subtopics']) && is_array($topic['subtopics'])) {
             foreach ($topic['subtopics'] as $subtopic) {
-                $normalizedsubtopic = [
+                $normalsubtopic = [
                     'title' => $subtopic['title'] ?? 'Untitled Subtopic',
                     'content' => $subtopic['content'] ?? ($subtopic['content_html'] ?? ''),
                     'content_html' => $subtopic['content_html'] ?? ($subtopic['content'] ?? ''),
@@ -243,22 +242,22 @@ function local_haccgen_normalize_topics(array $topics): array {
 
                 // Preserve learning objectives if present.
                 if (!empty($subtopic['learning_objectives'])) {
-                    $normalizedsubtopic['learning_objectives'] = $subtopic['learning_objectives'];
+                    $normalsubtopic['learning_objectives'] = $subtopic['learning_objectives'];
                 }
 
                 // Preserve any JSON-encoded learning objectives.
                 if (!empty($subtopic['json_learning_objectives'])) {
-                    $normalizedsubtopic['json_learning_objectives'] = $subtopic['json_learning_objectives'];
+                    $normalsubtopic['json_learning_objectives'] = $subtopic['json_learning_objectives'];
                 }
 
-                $normalizedtopic['subtopics'][] = $normalizedsubtopic;
+                $normaltopic['subtopics'][] = $normalsubtopic;
             }
         }
 
         // Also check for content_sections structure (alternative format).
-        if (!empty($topic['content_sections']) && empty($normalizedtopic['subtopics'])) {
+        if (!empty($topic['content_sections']) && empty($normaltopic['subtopics'])) {
             foreach ($topic['content_sections'] as $section) {
-                $normalizedtopic['subtopics'][] = [
+                $normaltopic['subtopics'][] = [
                     'title' => $section['section_title'] ?? 'Untitled Section',
                     'content' => $section['content'] ?? '',
                     'content_html' => $section['content'] ?? '',
@@ -267,7 +266,7 @@ function local_haccgen_normalize_topics(array $topics): array {
             }
         }
 
-        $normalized[] = $normalizedtopic;
+        $normalized[] = $normaltopic;
     }
 
     return $normalized;
@@ -283,12 +282,11 @@ if (!is_dir($logdir)) {
 $logfile = $logdir . '/consume_job_debug.log';
 
 /**
- * Write message to log file.
+ * Helper function to write to single log file.
  *
- * @param string $message The log message.
- * @param string $logfile Path to log file.
- * @param int|null $jobid Optional job identifier.
- * @return void
+ * @param string $message The message to log.
+ * @param string $logfile The log file path.
+ * @param int|null $jobid The job ID for context.
  */
 function write_log($message, $logfile, $jobid = null) {
     $prefix = $jobid ? "[Job {$jobid}]" : "";
@@ -297,8 +295,7 @@ function write_log($message, $logfile, $jobid = null) {
 }
 
 write_log("========== CONSUME_JOB STARTED ==========", $logfile, $jobid);
-write_log("Job ID: {$jobid}, Type: {$job->type}, Course: {$job->courseid}, User: {$USER->id}",
-    $logfile, $jobid);
+write_log("Job ID: {$jobid}, Type: {$job->type}, Course: {$job->courseid}, User: {$USER->id}", $logfile, $jobid);
 
 // Load session-scoped data (MUC).
 $haccgendata = session_store::get('haccgen_data');
@@ -321,29 +318,33 @@ if ($job->type === 'topiccontent') {
 
     // Log examples count for debugging.
     $totalexamples = 0;
-    foreach ($topics as $topicidx => $topic) {
+    foreach ($topics as $topicindex => $topic) {
         $examplesintopic = 0;
         foreach ($topic['subtopics'] ?? [] as $subtopic) {
             if (!empty($subtopic['examples']) && is_array($subtopic['examples'])) {
                 $examplesintopic += count($subtopic['examples']);
             }
         }
-        write_log("Topic {$topicidx} '{$topic['title']}' has {$examplesintopic} examples",
-            $logfile, $jobid);
+        write_log("Topic {$topicindex} '{$topic['title']}' has {$examplesintopic} examples", $logfile, $jobid);
         $totalexamples += $examplesintopic;
     }
     write_log("Total examples across all topics: {$totalexamples}", $logfile, $jobid);
+
+    global $OUTPUT;
+    $topics = local_haccgen_prepend_about_course_topic($topics, $haccgendata, $OUTPUT);
 
     $haccgendata->topics = $topics;
 
     // Also store raw result for debugging.
     $haccgendata->last_raw_result = $result;
 
-    // Add these flags for fresh generation.
+    // Add flags for fresh generation.
     $haccgendata->is_fresh_generation = true;
-    $haccgendata->about_course_added = false;
-    write_log("Set is_fresh_generation = true, about_course_added = false", $logfile, $jobid);
-    // End flags.
+    $labels = local_haccgen_i18n_labels($haccgendata->activelang ?? $haccgendata->courselanguage ?? 'English');
+    $haccgendata->about_course_added = local_haccgen_topics_have_about($topics, $labels['about']);
+    write_log("Set is_fresh_generation = true, about_course_added = " .
+        ($haccgendata->about_course_added ? 'true' : 'false'), $logfile, $jobid);
+    // End of flags.
 
     // Store canonical payload for auto-save.
     if (!empty($result)) {
@@ -362,6 +363,7 @@ if ($job->type === 'topiccontent') {
                     'courselanguage' => $haccgendata->courselanguage ?? '',
                     'numberoftopics' => $haccgendata->numberoftopics ?? '',
                     'activelang' => $haccgendata->activelang ?? '',
+                    'coursesummary' => $haccgendata->coursesummary ?? 'no',
                 ],
             ];
         }
@@ -369,10 +371,10 @@ if ($job->type === 'topiccontent') {
         $haccgendata->canonical_payload = $canonicalpayload;
         $haccgendata->canonical_payload_json = json_encode($canonicalpayload, JSON_UNESCAPED_UNICODE);
 
-        write_log("Stored canonical payload (" . strlen($haccgendata->canonical_payload_json) .
-            " bytes)", $logfile, $jobid);
+        write_log("Stored canonical payload (" . strlen($haccgendata->canonical_payload_json) . " bytes)",
+            $logfile, $jobid);
     }
-    // End store canonical payload.
+    // End of store canonical payload.
 
     // Auto-save to database (always create new record).
     write_log("Starting auto-save process...", $logfile, $jobid);
@@ -476,7 +478,7 @@ if ($job->type === 'topiccontent') {
     } else {
         write_log("✗ AUTO-SAVE SKIPPED: No topics data", $logfile, $jobid);
     }
-    // End auto-save.
+    // End of auto-save.
 
     // Store content generation timing for display on step 4.
     $haccgendata->last_content_generation_duration_seconds = max(0,
@@ -486,18 +488,19 @@ if ($job->type === 'topiccontent') {
     write_log("Generation duration: {$haccgendata->last_content_generation_duration_seconds} seconds",
         $logfile, $jobid);
 
+    session_store::delete('haccgen_last_loaded_batchid');
     session_store::set('haccgen_data', $haccgendata);
     write_log("Session data saved", $logfile, $jobid);
 
     write_log("Redirecting to step 4", $logfile, $jobid);
     write_log("========== CONSUME_JOB COMPLETED ==========", $logfile, $jobid);
 
-    // In consume_job.php, change the redirect to.
+    // In consume_job.php, redirect to step 4 with auto-save ID.
     redirect(new moodle_url('/local/haccgen/manage.php', [
         'id' => $job->courseid,
         'step' => 4,
         'generated' => 1,
-        'autosave_id' => $recordid,  // Pass the auto-save ID.
+        'autosave_id' => $recordid ?? 0,  // Pass the auto-save ID.
     ]));
 }
 

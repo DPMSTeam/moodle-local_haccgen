@@ -52,6 +52,17 @@ Source: PostScript::ISOLatin1Encoding (Perl)
                         <span style="font-size:1rem; font-weight:500; color:#2a3d66;">{{courseduration}}</span>
                     </div>
                 </div>
+
+                <div style="display:flex; align-items:flex-start; gap:10px; background:#f5f8fc;
+                            border-radius:12px; padding:12px 14px;">
+                    <div>
+                        <span style="display:block; font-size:0.85rem; color:#6b7b93;">{{#str}}coursesummary, local_haccgen{{/str}}</span>
+                        <span style="font-size:1rem; font-weight:500; color:#2a3d66;">
+                            {{#is_summary_yes}}{{#str}}yes, local_haccgen{{/str}}{{/is_summary_yes}}
+                            {{#is_summary_no}}{{#str}}no, local_haccgen{{/str}}{{/is_summary_no}}
+                        </span>
+                    </div>
+                </div>
             </div>
 
         </div>

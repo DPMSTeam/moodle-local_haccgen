@@ -13,7 +13,7 @@ This file is part of Moodle
 <div class="haccgen-layout">
     <!-- HAMBURGER TOGGLE BUTTON - ALWAYS VISIBLE -->
     <button class="hamburger-toggle-btn" id="hamburger-toggle">
-<i class="fas fa-angle-double-right"></i>
+        <i class="fas fa-angle-double-right"></i>
     </button>
 
     <!-- SIDE MENU -->
@@ -42,7 +42,7 @@ This file is part of Moodle
                                 <span class="move-four-direction move-topic" title="Move Topic (Drag to reposition)"><i class="fas fa-arrows-up-down-left-right"></i></span>
                                 <span class="menu-rename-topic" title="Rename Topic"><i class="fas fa-edit"></i></span>
                                 <span class="menu-delete-topic" title="Delete Topic"><i class="fas fa-trash-alt"></i></span>
-                                <span class="menu-toggle-icon">−</span>
+                                
                             </div>
                         </div>
                         <div class="menu-subtopics-list">
@@ -78,7 +78,7 @@ This file is part of Moodle
         </div>
         
         <div class="menu-footer">
-            <small>HACCGen Course Builder v1.0</small>
+            <small>HACCGen Course Builder v2.0</small>
         </div>
     </div>
 
@@ -86,6 +86,7 @@ This file is part of Moodle
     <div class="haccgen-editor-section" id="haccgen-editor-section">
         <form method="post" action="{{{action}}}" id="step4-form">
             <input type="hidden" name="id" value="{{courseid}}">
+            <input type="hidden" name="coursesummary" id="coursesummary-meta" value="{{coursesummary}}">
             <input type="hidden" name="step" value="{{currentstep}}">
             <input type="hidden" name="action" value="save">
             <input type="hidden" name="topicsjson" id="topicsjson" value="">
@@ -111,7 +112,7 @@ This file is part of Moodle
                     <h6><i class="fas fa-question-circle"></i> Quiz Preview</h6>
                     <div id="quiz-content"></div>
                     <button type="button" class="btn btn-primary mt-3" id="add-new-quiz-btn">
-                        <i class="fas fa-plus-circle"></i> Add Question Manually
+                        <i class="fas fa-plus-circle"></i> Add Question
                     </button>
                 </div>
 
@@ -216,6 +217,55 @@ let sortableTopics = null;
 let sortableSubtopicInstances = new Map();
 
 let isContentLoading = true;
+
+/** Whether a subtopic row is a quiz (ordered inside subtopics). */
+function isQuizSubtopicItem(sub) {
+    return !!(sub && (sub.type === 'quiz' || (sub.quiz_title && Array.isArray(sub.questions))));
+}
+
+/** Topic quiz_data is a single object in PHP; tolerate legacy array shape. */
+function getTopicQuizList(topic) {
+    if (!topic || !topic.quiz_data) {
+        return [];
+    }
+    return Array.isArray(topic.quiz_data) ? topic.quiz_data : [topic.quiz_data];
+}
+
+function findQuizInTopic(topic, quizTitle) {
+    const inSubtopics = (topic.subtopics || []).find(
+        (s) => isQuizSubtopicItem(s) && s.quiz_title === quizTitle
+    );
+    if (inSubtopics) {
+        return inSubtopics;
+    }
+    return getTopicQuizList(topic).find((q) => q.quiz_title === quizTitle) || null;
+}
+
+function setTopicQuizData(topic, quizObj) {
+    if (!quizObj) {
+        delete topic.quiz_data;
+        delete topic.quiz_included;
+        return;
+    }
+    topic.quiz_data = {
+        quiz_title: quizObj.quiz_title,
+        instructions: quizObj.instructions || '',
+        questions: quizObj.questions || [],
+    };
+    topic.quiz_included = 1;
+}
+
+function countTopicQuizzes(topic) {
+    const fromSubtopics = (topic.subtopics || []).filter(isQuizSubtopicItem).length;
+    if (fromSubtopics > 0) {
+        return fromSubtopics;
+    }
+    return getTopicQuizList(topic).length;
+}
+
+function countTopicPages(topic) {
+    return (topic.subtopics || []).filter((s) => !isQuizSubtopicItem(s)).length;
+}
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM Loaded - Initializing with Four-Direction Drag & Drop...');
@@ -433,79 +483,48 @@ function updateSubtopicOrderInTopic(topicElement) {
     const topicTitle = topicElement.querySelector('.menu-topic-title')?.textContent;
     const topic = currentTopicsData.find(t => t.title === topicTitle);
     if (!topic) return;
-
-    const ordered = [];
-    let quizDataArray = []; // Store multiple quizzes if needed
-
-    topicElement.querySelectorAll('.menu-subtopic-item').forEach(elem => {
+    
+    const subtopicElements = topicElement.querySelectorAll('.menu-subtopic-item');
+    const newSubtopics = [];
+    let lastQuiz = null;
+    
+    subtopicElements.forEach(elem => {
         const type = elem.getAttribute('data-type');
-        if (type === 'quiz') {
+        if (type === 'subtopic') {
+            const title = elem.getAttribute('data-subtopic-title');
+            const existing = topic.subtopics?.find(
+                (s) => !isQuizSubtopicItem(s) && s.title === title
+            );
+            if (existing) {
+                newSubtopics.push(existing);
+            }
+        } else if (type === 'quiz') {
             const title = elem.getAttribute('data-quiz-title');
-            // Try to get quiz data from quizContents first
-            let source = quizContents[title];
-            
-            // If not found in quizContents, try topic.quiz_data
-            if (!source && topic.quiz_data) {
-                if (Array.isArray(topic.quiz_data)) {
-                    source = topic.quiz_data.find(q => q.quiz_title === title);
-                } else if (topic.quiz_data.quiz_title === title) {
-                    source = topic.quiz_data;
-                }
-            }
-            
-            if (source && source.questions) {
-                const quizEntry = {
+            let existing = findQuizInTopic(topic, title);
+            if (!existing && quizContents[title]) {
+                existing = {
                     type: 'quiz',
                     quiz_title: title,
-                    title: title,
-                    instructions: source.instructions || '',
-                    questions: source.questions,
+                    instructions: quizContents[title].instructions || '',
+                    questions: quizContents[title].questions || [],
                 };
-                ordered.push(quizEntry);
-                quizDataArray.push({
-                    quiz_title: title,
-                    instructions: source.instructions || '',
-                    questions: source.questions,
-                });
-            } else {
-                // Fallback - create minimal quiz data
-                const fallbackQuiz = {
-                    type: 'quiz',
-                    quiz_title: title,
-                    title: title,
-                    instructions: '',
-                    questions: [],
-                };
-                ordered.push(fallbackQuiz);
-                quizDataArray.push({
-                    quiz_title: title,
-                    instructions: '',
-                    questions: [],
-                });
             }
-            return;
-        }
-
-        const title = elem.getAttribute('data-subtopic-title');
-        const existing = (topic.subtopics || []).find(s =>
-            s.title === title && (s.type || 'page') !== 'quiz'
-        );
-        if (existing) {
-            ordered.push({ ...existing, type: 'page' });
+            if (existing) {
+                const quizItem = isQuizSubtopicItem(existing) ? existing : {
+                    type: 'quiz',
+                    quiz_title: existing.quiz_title,
+                    title: existing.quiz_title,
+                    instructions: existing.instructions || '',
+                    questions: existing.questions || [],
+                };
+                newSubtopics.push(quizItem);
+                lastQuiz = quizItem;
+            }
         }
     });
     
-    // Filter out quiz entries from subtopics
-    topic.subtopics = ordered.filter(item => item.type !== 'quiz');
-    
-    // Handle quiz data - could be multiple quizzes per topic
-    if (quizDataArray.length > 0) {
-        topic.quiz_included = 1;
-        topic.quiz_data = quizDataArray; // Store as array to support multiple quizzes
-    } else {
-        delete topic.quiz_included;
-        delete topic.quiz_data;
-    }
+    topic.subtopics = newSubtopics;
+    setTopicQuizData(topic, lastQuiz);
 }
 
 /* ============================================================
@@ -606,14 +625,20 @@ function deleteTopic(topicElement, topicTitle) {
         const topic = currentTopicsData[topicIndex];
         if (topic.subtopics) {
             topic.subtopics.forEach(sub => {
-                if (subtopicContents[sub.title]) delete subtopicContents[sub.title];
+                if (isQuizSubtopicItem(sub)) {
+                    if (quizContents[sub.quiz_title]) {
+                        delete quizContents[sub.quiz_title];
+                    }
+                } else if (subtopicContents[sub.title]) {
+                    delete subtopicContents[sub.title];
+                }
             });
         }
-        if (topic.quiz_data) {
-            topic.quiz_data.forEach(quiz => {
-                if (quizContents[quiz.quiz_title]) delete quizContents[quiz.quiz_title];
-            });
-        }
+        getTopicQuizList(topic).forEach(quiz => {
+            if (quiz.quiz_title && quizContents[quiz.quiz_title]) {
+                delete quizContents[quiz.quiz_title];
+            }
+        });
         currentTopicsData.splice(topicIndex, 1);
     }
     
@@ -670,10 +695,18 @@ function deleteQuiz(quizElement, quizTitle) {
     
     if (topicIndex !== -1) {
         const topic = currentTopicsData[topicIndex];
-        const quizIndex = topic.quiz_data?.findIndex(q => q.quiz_title === quizTitle);
-        if (quizIndex !== -1) {
-            topic.quiz_data.splice(quizIndex, 1);
-            if (quizContents[quizTitle]) delete quizContents[quizTitle];
+        const subtopicIndex = topic.subtopics?.findIndex(
+            (s) => isQuizSubtopicItem(s) && s.quiz_title === quizTitle
+        );
+        if (subtopicIndex !== -1) {
+            topic.subtopics.splice(subtopicIndex, 1);
+        }
+        const topicQuiz = getTopicQuizList(topic).find((q) => q.quiz_title === quizTitle);
+        if (topicQuiz) {
+            setTopicQuizData(topic, null);
+        }
+        if (quizContents[quizTitle]) {
+            delete quizContents[quizTitle];
         }
     }
     
@@ -768,56 +801,35 @@ function renameQuiz(quizElement, oldName, newName) {
     quizElement.setAttribute('data-quiz-title', newName);
     quizElement.setAttribute('data-original-title', newName);
     
-    // Update in currentTopicsData
     for (const topic of currentTopicsData) {
-        // Check in quiz_data array
-        if (topic.quiz_data && Array.isArray(topic.quiz_data)) {
-            const idx = topic.quiz_data.findIndex(q => q.quiz_title === oldName);
-            if (idx !== -1) {
-                topic.quiz_data[idx].quiz_title = newName;
-                // Also update the title property
-                topic.quiz_data[idx].title = newName;
-                break;
-            }
+        const subIdx = topic.subtopics?.findIndex(
+            (s) => isQuizSubtopicItem(s) && s.quiz_title === oldName
+        );
+        if (subIdx !== -1) {
+            topic.subtopics[subIdx].quiz_title = newName;
+            topic.subtopics[subIdx].title = newName;
+            setTopicQuizData(topic, topic.subtopics[subIdx]);
+            break;
         }
-        
-        // Also check in subtopics array (where quizzes might be stored)
-        if (topic.subtopics && Array.isArray(topic.subtopics)) {
-            const subtopicIdx = topic.subtopics.findIndex(s => s.type === 'quiz' && s.quiz_title === oldName);
-            if (subtopicIdx !== -1) {
-                topic.subtopics[subtopicIdx].quiz_title = newName;
-                topic.subtopics[subtopicIdx].title = newName;
-                break;
-            }
+        const topicQuiz = getTopicQuizList(topic).find((q) => q.quiz_title === oldName);
+        if (topicQuiz) {
+            topicQuiz.quiz_title = newName;
+            setTopicQuizData(topic, topicQuiz);
+            break;
         }
     }
     
-    // Update quizContents - IMPORTANT: Preserve the quiz data
     if (quizContents[oldName]) {
-        // Create a new entry with the new name
-        quizContents[newName] = { ...quizContents[oldName] };
-        quizContents[newName].quiz_title = newName;
-        
-        // Update questions array if needed (though quiz_title isn't typically stored per question)
-        if (quizContents[newName].questions && Array.isArray(quizContents[newName].questions)) {
-            quizContents[newName].questions = quizContents[newName].questions.map(q => ({ ...q }));
-        }
-        
-        // Delete the old entry
+        quizContents[newName] = quizContents[oldName];
+        if (quizContents[newName]) quizContents[newName].quiz_title = newName;
         delete quizContents[oldName];
     }
     
-    // Update currentQuizTitle if this is the active quiz
     if (currentQuizTitle === oldName) {
         currentQuizTitle = newName;
         document.getElementById('content-title').innerHTML = '<i class="fas fa-question-circle"></i> ' + escapeHtml(newName);
-        // Reload the quiz content with the new name
         loadQuizContent(newName);
     }
-    
-    // Mark as dirty and show success message
-    markDirty();
-    showToast(`Quiz renamed from "${oldName}" to "${newName}"`);
 }
 
 /* ============================================================
@@ -1002,7 +1014,7 @@ function loadQuizContent(title) {
     currentQuizTitle = title;
 
     if (!quizData || !quizData.questions || !quizData.questions.length) {
-        container.innerHTML = '<p><em>No questions found. Click "Add Question Manually" to create one.</em></p>';
+        container.innerHTML = '<p><em>No questions found. Click "Add Question" to create one.</em></p>';
         return;
     }
 
@@ -1176,8 +1188,6 @@ function setupFormSubmission() {
         }
 
         e.preventDefault();
-        isSubmitting = true;
-        isSaving = true;
 
         const submitter = e.submitter;
         const saveBtn = document.getElementById('save-create-btn');
@@ -1189,6 +1199,9 @@ function setupFormSubmission() {
         try {
             if (currentSubtopicTitle) saveCurrentContent();
             if (currentQuizTitle) saveCurrentQuizEdits();
+
+            isSubmitting = true;
+            isSaving = true;
 
             const payload = await buildPayload();
             const jsonPayload = JSON.stringify(payload);
@@ -1244,69 +1257,48 @@ async function buildPayload() {
     const menuItems = document.querySelectorAll('.menu-topic-item');
     
     menuItems.forEach(menuItem => {
-        updateSubtopicOrderInTopic(menuItem);
-
         const titleElem = menuItem.querySelector('.menu-topic-title');
         const title = titleElem ? titleElem.textContent.trim() : 'Untitled Topic';
         
         const subtopics = [];
-        let quiz = null;
-
         menuItem.querySelectorAll('.menu-subtopic-item').forEach(item => {
             const itemType = item.getAttribute('data-type');
-            if (itemType === 'quiz') {
+            if (itemType === 'subtopic') {
+                const st = item.getAttribute('data-subtopic-title');
+                if (!st) return;
+                const obj = subtopicContents[st] || { text: '<p><em>No content.</em></p>', itemid: 0 };
+                subtopics.push({
+                    type: 'page',
+                    title: st,
+                    content: {
+                        text: (typeof obj === 'object' && 'text' in obj) ? obj.text : obj,
+                        itemid: (typeof obj === 'object' && 'itemid' in obj) ? Number(obj.itemid) : 0
+                    }
+                });
+            } else if (itemType === 'quiz') {
                 const qtitle = item.getAttribute('data-quiz-title');
                 const qdata = quizContents[qtitle];
                 if (qdata && Array.isArray(qdata.questions)) {
-                    const questions = qdata.questions.map((q, idx) => ({
-                        question_id: q.question_id || `q${idx + 1}`,
-                        type: q.type || 'multiple_choice',
-                        difficulty: q.difficulty || 'easy',
-                        question: (q.question || '').trim(),
-                        options: Array.isArray(q.options) ? q.options.map(o => (o || '').trim()) : [],
-                        correct_answer: (q.correct_answer || q.answer || '').trim(),
-                        explanation: (q.explanation || '').trim()
-                    }));
                     subtopics.push({
                         type: 'quiz',
-                        title: qtitle,
                         quiz_title: qtitle,
                         instructions: qdata.instructions || '',
-                        questions,
+                        questions: qdata.questions
                     });
-                    quiz = {
-                        quiz_title: qtitle,
-                        instructions: qdata.instructions || '',
-                        questions,
-                    };
                 }
-                return;
             }
-
-            const st = item.getAttribute('data-subtopic-title');
-            if (!st) {
-                return;
-            }
-            const obj = subtopicContents[st] || { text: '<p><em>No content.</em></p>', itemid: 0 };
-            subtopics.push({
-                title: st,
-                content: {
-                    text: (typeof obj === 'object' && 'text' in obj) ? obj.text : obj,
-                    itemid: (typeof obj === 'object' && 'itemid' in obj) ? Number(obj.itemid) : 0
-                },
-                type: 'page'
-            });
         });
         
-        const topicObj = { title, subtopics };
-        if (quiz) {
-            topicObj.quiz = quiz;
-        }
-        topics.push(topicObj);
+        topics.push({ title, subtopics });
     });
     
     return {
-        meta: { courseid: Number(document.querySelector('input[name="id"]').value), step: 4, version: 1 },
+        meta: {
+            courseid: Number(document.querySelector('input[name="id"]').value),
+            step: 4,
+            version: 1,
+            coursesummary: document.getElementById('coursesummary-meta')?.value || 'no'
+        },
         topics
     };
 }
@@ -1368,9 +1360,11 @@ function openMenu() {
 
     if (sideMenu) sideMenu.classList.add('open');
     if (overlay) overlay.classList.remove('active');
-    
-    // ADD THIS LINE - Hide hamburger button
-    document.body.classList.add('menu-open');
+
+    // HIDE hamburger button when menu is OPEN
+    if (hamburgerBtn) {
+        hamburgerBtn.classList.add('hidden');
+    }
 
     isMenuOpen = true;
 }
@@ -1382,9 +1376,11 @@ function closeMenu() {
 
     if (sideMenu) sideMenu.classList.remove('open');
     if (overlay) overlay.classList.remove('active');
-    
-    // ADD THIS LINE - Show hamburger button
-    document.body.classList.remove('menu-open');
+
+    // SHOW hamburger button when menu is CLOSED
+    if (hamburgerBtn) {
+        hamburgerBtn.classList.remove('hidden');
+    }
 
     isMenuOpen = false;
 }
@@ -1407,8 +1403,8 @@ function updateStats() {
     const totalTopics = currentTopicsData.length;
     let totalPages = 0, totalQuizzes = 0;
     currentTopicsData.forEach(t => {
-        totalPages += t.subtopics?.length || 0;
-        totalQuizzes += t.quiz_data?.length || 0;
+        totalPages += countTopicPages(t);
+        totalQuizzes += countTopicQuizzes(t);
     });
     const topicsSpan = document.getElementById('total-topics-count');
     const pagesSpan = document.getElementById('total-pages-count');
@@ -1484,21 +1480,12 @@ body { margin: 0; padding: 0; overflow-x: hidden; }
     */
 }
 .hamburger-toggle-btn:hover { background: #0052a3; transform: scale(1.02); }
-.hamburger-toggle-btn i { font-size: 10px; }
+.hamburger-toggle-btn i { font-size: 12px; }
 
 .haccgen-side-menu {
     width: 320px; background: #ffffff; color: #333333; flex-shrink: 0; transition: transform 0.3s ease-in-out;
     display: flex; flex-direction: column; box-shadow: 2px 0 15px rgba(0,0,0,0.1); z-index: 1000; position: relative;
     height: calc(100vh - 60px); overflow: hidden; border-right: 1px solid #e0e0e0;
-}
-/* Hide hamburger button when side menu is open */
-.haccgen-side-menu.open ~ .hamburger-toggle-btn,
-.haccgen-side-menu.open + .hamburger-toggle-btn {
-    display: none !important;
-}
-/* Add this to your existing styles */
-body.menu-open .hamburger-toggle-btn {
-    display: none !important;
 }
 .haccgen-side-menu.open { transform: translateX(0); }
 .haccgen-side-menu:not(.open) { transform: translateX(-100%); position: fixed; left: 0; top: 0; height: 100%; z-index: 1000; }
@@ -1578,7 +1565,8 @@ body.menu-open .hamburger-toggle-btn {
 .modern-btn-secondary:hover { background: #5a6268; transform: translateY(-1px); }
 .button-group { margin-top: 20px; }
 @media (max-width: 768px) {
-    .hamburger-toggle-btn { top: 65px; left: 15px; padding: 6px 10px; font-size: 10px; }
+    .hamburger-toggle-btn { top: 65px; left: 15px; padding: 8px 14px; font-size: 12px; }
+    .hamburger-toggle-btn i { font-size: 14px; }
     .haccgen-side-menu { width: 280px; }
     .haccgen-editor-section { padding: 15px; }
     .editor-content-wrapper { min-height: 350px; }
@@ -1612,12 +1600,6 @@ body.menu-open .hamburger-toggle-btn {
     margin-top: 12px;
     font-weight: 600;
 }
-
-@keyframes spin {
-    100% {
-        transform: rotate(360deg);
-    }
-}
 /* Hide the entire nav-tabs container */
 .secondary-navigation .navigation .nav-tabs {
     display: none !important;
@@ -1632,5 +1614,12 @@ body.menu-open .hamburger-toggle-btn {
 .secondary-navigation {
     display: none !important;
 }
-
+.hamburger-toggle-btn.hidden {
+    display: none !important;
+}
+@keyframes spin {
+    100% {
+        transform: rotate(360deg);
+    }
+}
 </style>

@@ -25,8 +25,8 @@
 require_once(__DIR__ . '/../../config.php');
 require_once($CFG->dirroot . '/local/haccgen/lib.php');
 
-use local_haccgen\session_store;
 use local_haccgen\outline_helper;
+use local_haccgen\session_store;
 
 global $DB, $CFG, $USER;
 
@@ -162,9 +162,9 @@ try {
                 'courseduration' => 'courseduration',
                 'courselanguage' => 'courselanguage',
                 'numberoftopics' => 'numberoftopics',
-                'coursesummary' => 'coursesummary',
                 'activelang' => 'activelang',
                 'learning_objectives1' => 'learning_objectives1',
+                'coursesummary' => 'coursesummary',
             ] as $sesskey => $metakey
         ) {
             if (array_key_exists($metakey, $meta)) {
@@ -200,7 +200,7 @@ $hasblobmediasrc = static function (string $html): bool {
 foreach ($payload['topics'] as $topicidx => $topic) {
     $subtopics = (array) ($topic['subtopics'] ?? []);
     foreach ($subtopics as $subidx => $subtopic) {
-        if (!is_array($subtopic) || outline_helper::is_quiz_item($subtopic)) {
+        if (is_array($subtopic) && outline_helper::is_quiz_item($subtopic)) {
             continue;
         }
         $content = $subtopic['content'] ?? [];
@@ -287,12 +287,16 @@ $kbase = [];
 $quizbytitle = [];
 
 foreach ($payload['topics'] as $tidx => $t) {
-    $row = outline_helper::parse_payload_topic((array)$t);
-    $quiz = $row['quiz_data'] ?? null;
-    if ($quiz) {
-        $quizbytitle[$quiz['quiz_title']] = $quiz;
+    $topic = outline_helper::parse_payload_topic($t);
+    if (($topic['title'] ?? '') === '') {
+        $topic['title'] = 'Topic ' . ($tidx + 1);
     }
-    $kbase[] = $row;
+
+    $kbase[] = $topic;
+
+    if (!empty($topic['quiz_data']['quiz_title'])) {
+        $quizbytitle[$topic['quiz_data']['quiz_title']] = $topic['quiz_data'];
+    }
 }
 
 $log('payload.normalized.summary', [
@@ -363,8 +367,29 @@ if (!$haccgendata || !is_object($haccgendata)) {
 $haccgendata->topics = $kbase;
 $haccgendata->quizjson = $quizbytitle;
 $haccgendata->topicsjson = $flatforui;
+$haccgendata->canonical_payload = [
+    'topics' => $kbase,
+    'meta' => [
+        'TOPICTITLE' => $haccgendata->TOPICTITLE ?? '',
+        'targetaudience' => $haccgendata->targetaudience ?? '',
+        'description' => $haccgendata->description ?? '',
+        'levelofunderstanding' => $haccgendata->levelofunderstanding ?? '',
+        'toneofnarrative' => $haccgendata->toneofnarrative ?? '',
+        'courseduration' => $haccgendata->courseduration ?? '',
+        'courselanguage' => $haccgendata->courselanguage ?? '',
+        'numberoftopics' => $haccgendata->numberoftopics ?? '',
+        'activelang' => $haccgendata->activelang ?? '',
+        'coursesummary' => $haccgendata->coursesummary ?? 'no',
+        'loaded_batchid' => $record->batchid,
+    ],
+];
+$haccgendata->canonical_payload_json = json_encode(
+    $haccgendata->canonical_payload,
+    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+);
 
 session_store::set('haccgen_data', $haccgendata);
+session_store::set('haccgen_last_loaded_batchid', $record->batchid);
 
 // Redirect.
 redirect(

@@ -182,8 +182,12 @@ class outline_helper {
             ];
         }
 
-        if (!$quizdata && !empty($t['quiz']) && is_array($t['quiz'])) {
-            $quiz = self::normalize_quiz_data($t['quiz'], $title);
+        $legacyquiz = null;
+        if (!$quizdata) {
+            $legacyquiz = $t['quiz_data'] ?? ($t['quiz'] ?? null);
+        }
+        if (!$quizdata && is_array($legacyquiz) && !empty($legacyquiz)) {
+            $quiz = self::normalize_quiz_data($legacyquiz, $title);
             if ($quiz) {
                 $topic['subtopics'][] = $quiz;
                 $quizdata = [

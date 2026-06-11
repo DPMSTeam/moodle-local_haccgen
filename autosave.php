@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Consume a completed generation job and redirect the user to the next step.
+ * Auto-save AI-generated content when user reaches step 4.
  *
  * @package     local_haccgen
  * @copyright   2026 Dynamicpixel Multimedia Solutions
@@ -25,8 +25,8 @@
 require_once(__DIR__ . '/../../config.php');
 require_once($CFG->dirroot . '/local/haccgen/lib.php');
 
-use local_haccgen\session_store;
 use local_haccgen\outline_helper;
+use local_haccgen\session_store;
 
 global $DB, $CFG, $USER;
 
@@ -159,12 +159,16 @@ $kbase = [];
 $quizbytitle = [];
 
 foreach ($payload['topics'] as $tidx => $t) {
-    $row = outline_helper::parse_payload_topic((array)$t);
-    $quiz = $row['quiz_data'] ?? null;
-    if ($quiz) {
-        $quizbytitle[$quiz['quiz_title']] = $quiz;
+    $topic = outline_helper::parse_payload_topic($t);
+    if (($topic['title'] ?? '') === '') {
+        $topic['title'] = 'Topic ' . ($tidx + 1);
     }
-    $kbase[] = $row;
+
+    $kbase[] = $topic;
+
+    if (!empty($topic['quiz_data']['quiz_title'])) {
+        $quizbytitle[$topic['quiz_data']['quiz_title']] = $topic['quiz_data'];
+    }
 }
 
 $log('AUTO_SAVE_NORMALIZED', [
@@ -232,4 +236,3 @@ redirect(
     get_string('autosavedsuccess', 'local_haccgen'),
     0
 );
-

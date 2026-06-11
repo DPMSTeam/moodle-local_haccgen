@@ -387,7 +387,7 @@ Source: PostScript::ISOLatin1Encoding (Perl)
   <label class="form-label">{{#str}}learningobjectives, local_haccgen{{/str}}</label>
   <ul id="edit-topic-objectives" class="list-group ps-3 mb-2"></ul>
   <div class="input-group">
-    <input type="text" id="new-objective-input" class="form-control" placeholder="{{#str}}addobjective_placeholder, local_haccgen{{/str}}">>
+    <input type="text" id="new-objective-input" class="form-control" placeholder="{{#str}}addobjective_placeholder, local_haccgen{{/str}}">
     <button type="button" id="add-objective-btn" class="btn btn-outline-primary">{{#str}}add, local_haccgen{{/str}}</button>
   </div>
 </div>
@@ -497,6 +497,20 @@ newObjectiveInput.addEventListener('keydown', (e) => {
         quizQuestionCountGroup.style.display = quizYesRadio.checked ? 'block' : 'none';
     }
 
+    function applyQuizRestrictions(topicdata) {
+        const isSummary = !!(topicdata && topicdata.is_course_summary);
+        quizYesRadio.disabled = isSummary;
+        quizNoRadio.disabled = isSummary;
+        if (isSummary) {
+            quizNoRadio.checked = true;
+            quizYesRadio.checked = false;
+            quizQuestionCountGroup.style.display = 'none';
+        } else {
+            quizYesRadio.disabled = false;
+            quizNoRadio.disabled = false;
+        }
+    }
+
     quizYesRadio.addEventListener('change', toggleQuizQuestionCount);
     quizNoRadio.addEventListener('change', toggleQuizQuestionCount);
 
@@ -523,10 +537,11 @@ newObjectiveInput.addEventListener('keydown', (e) => {
             edittitleInput.value = topicdata.title || '';
             editDescriptionInput.value = topicdata.description || '';
             editDurationInput.value = topicdata.estimated_duration || '';
-            quizYesRadio.checked = topicdata.has_quiz || false;
+            quizYesRadio.checked = false || topicdata.has_quiz;
             quizNoRadio.checked = !topicdata.has_quiz;
             quizQuestionCountGroup.style.display = topicdata.has_quiz ? 'block' : 'none';
             quizQuestionInput.value = topicdata.quiz_question_count || 1;
+            applyQuizRestrictions(topicdata);
             objectivesList.innerHTML = '';
      (topicdata.learning_objectives || []).forEach(obj => {
   const li = document.createElement('li');
@@ -563,6 +578,7 @@ newObjectiveInput.addEventListener('keydown', (e) => {
         quizYesRadio.checked = false;
         quizQuestionInput.value = 1;
         quizQuestionCountGroup.style.display = 'none';
+        applyQuizRestrictions({});
         editIdInput.value = '';
         window.currentEditingItem = null;
         window.isAddingNewTopic = true;
@@ -584,6 +600,13 @@ const objectives = Array.from(objectivesList.querySelectorAll('li')).map(li =>
   li.querySelector('span').textContent.trim()
 );
 
+        let existingTopic = {};
+        if (window.currentEditingItem) {
+            try {
+                existingTopic = JSON.parse(decodeURIComponent(window.currentEditingItem.dataset.topicdata || '{}'));
+            } catch (e) {}
+        }
+
         const topicdata = {
             id: editIdInput.value || `topic-${Date.now()}`,
             title: newTitle,
@@ -592,8 +615,14 @@ const objectives = Array.from(objectivesList.querySelectorAll('li')).map(li =>
             learning_objectives: objectives,
             has_quiz: quizYesRadio.checked,
             quiz_question_count: quizYesRadio.checked ? parseInt(quizQuestionInput.value || '1', 10) : 0,
+            is_course_summary: existingTopic.is_course_summary || false,
             content: ''
         };
+
+        if (topicdata.is_course_summary) {
+            topicdata.has_quiz = false;
+            topicdata.quiz_question_count = 0;
+        }
 
         const encodedData = encodeURIComponent(JSON.stringify(topicdata));
 
@@ -656,7 +685,8 @@ const objectives = Array.from(objectivesList.querySelectorAll('li')).map(li =>
                 learning_objectives: topicdata.learning_objectives,
                 content: topicdata.content,
                 has_quiz: topicdata.has_quiz || false,
-                quiz_question_count: topicdata.quiz_question_count || 0
+                quiz_question_count: topicdata.quiz_question_count || 0,
+                is_course_summary: topicdata.is_course_summary || false
             };
         });
 

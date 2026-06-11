@@ -23,6 +23,7 @@
  */
 
 require_once(__DIR__ . '/../../config.php');
+require_once($CFG->dirroot . '/local/haccgen/lib.php');
 
 use local_haccgen\outline_helper;
 use local_haccgen\session_store;
@@ -35,7 +36,7 @@ $courseid = required_param('id', PARAM_INT);
 // Avoid PARAM_RAW_TRIMMED. Use PARAM_TEXT + strict whitelist.
 $tmpbatch = optional_param('batchid', '', PARAM_TEXT);
 $selectedbatchid = preg_replace('/[^A-Za-z0-9._-]/', '', $tmpbatch);
-$selectedbatchid = core_text::substr($selectedbatchid, 0, 255);
+$selectedbatchid = core_text::substr($selectedbatchid, 0, 40);
 
 $action = optional_param('action', '', PARAM_ALPHA);
 $userid = (int) $USER->id;
@@ -165,15 +166,14 @@ $sanitizequiz = static function ($in, string $faalbacktitle = '') use ($normstr)
     ];
 };
 
-// If a batch is targeted, ensure it belongs to this user & course (and is a draft).
+// If a batch is targeted, ensure it belongs to this course (draft or autosaved).
 if ($selectedbatchid !== '' && ($action === 'load' || $action === 'delete')) {
-    $owner = $DB->get_record(
-        'local_haccgen_content',
-        [
-            'batchid' => $selectedbatchid,
-            'status' => 'draft',
-        ],
-        'id,courseid',
+    $owner = $DB->get_record_sql(
+        "SELECT id, courseid
+           FROM {local_haccgen_content}
+          WHERE batchid = :batchid
+            AND status IN ('draft', 'autosaved')",
+        ['batchid' => $selectedbatchid],
         IGNORE_MISSING
     );
 
@@ -191,11 +191,39 @@ if ($selectedbatchid !== '' && ($action === 'load' || $action === 'delete')) {
 if ($selectedbatchid !== '' && $action === 'delete') {
     require_sesskey();
 
-    $DB->delete_records('local_haccgen_content', [
-        'courseid' => $courseid,
-        'batchid' => $selectedbatchid,
-        'status' => ['draft', 'autosaved'],
-    ]);
+    $todelete = $DB->get_records_sql(
+        "SELECT id
+           FROM {local_haccgen_content}
+          WHERE courseid = :courseid
+            AND batchid = :batchid
+            AND status IN ('draft', 'autosaved')",
+        [
+            'courseid' => $courseid,
+            'batchid' => $selectedbatchid,
+        ]
+    );
+
+    if (empty($todelete)) {
+        redirect(
+            new moodle_url('/local/haccgen/old_draft.php', ['id' => $courseid]),
+            get_string('draftnotfound', 'local_haccgen', 'Draft not found.'),
+            null,
+            \core\output\notification::NOTIFY_ERROR
+        );
+    }
+
+    foreach ($todelete as $row) {
+        $DB->delete_records('local_haccgen_content', ['id' => $row->id]);
+    }
+
+    $DB->delete_records_select(
+        'local_haccgen_timestamps',
+        'courseid = :courseid AND batchid = :batchid',
+        [
+            'courseid' => $courseid,
+            'batchid' => $selectedbatchid,
+        ]
+    );
 
     redirect(
         new moodle_url('/local/haccgen/old_draft.php', ['id' => $courseid]),
@@ -258,34 +286,34 @@ if ($selectedbatchid !== '' && $action === 'load') {
     $flatforui = [];  // Flat map for editor convenience.
 
     if ($isstructured) {
-        // New structured draft — preserve page/quiz order from subtopics.
+        // New structured drafts can contain pages and quizzes in one ordered subtopics array.
         foreach ($topicsdecoded as $tidx => $t) {
-            $topicrow = outline_helper::parse_payload_topic((array) $t);
-            $quiz = $topicrow['quiz_data'] ?? null;
-
-            if ($quiz) {
-                if (($quiz['quiz_title'] ?? '') === '') {
-                    $quiz['quiz_title'] = $topicrow['title'] ?? ('Topic ' . ($tidx + 1));
-                }
-                $quizmapout[$quiz['quiz_title']] = $quiz;
-            } else {
-                $title = $normstr($topicrow['title'] ?? ('Topic ' . ($tidx + 1)));
-                $qfromdb = $quizdecoded[$title] ?? null;
-                if ($qfromdb) {
-                    $quiz = $sanitizequiz($qfromdb, $title);
-                    if ($quiz) {
-                        $topicrow['quiz_included'] = 1;
-                        $topicrow['quiz_data'] = $quiz;
-                        $quizmapout[$quiz['quiz_title']] = $quiz;
-                    }
-                }
+            if (!is_array($t)) {
+                continue;
             }
 
-            foreach ($topicrow['subtopics'] as $s) {
-                if (outline_helper::is_quiz_item($s)) {
+            if (empty($t['title'])) {
+                $t['title'] = 'Topic ' . ($tidx + 1);
+            }
+
+            // If an older structured row has quiz only in quizjson, attach it before normalising.
+            if (empty($t['quiz']) && empty($t['quiz_data']) && !empty($quizdecoded[$t['title']])) {
+                $t['quiz_data'] = $quizdecoded[$t['title']];
+            }
+
+            $topicrow = outline_helper::parse_payload_topic($t);
+
+            foreach ((array) ($topicrow['subtopics'] ?? []) as $s) {
+                if (!is_array($s) || outline_helper::is_quiz_item($s)) {
                     continue;
                 }
+
+                // Flat map keyed by page title (editor expects this).
                 $flatforui[$s['title']] = $s['content'];
+            }
+
+            if (!empty($topicrow['quiz_data']['quiz_title'])) {
+                $quizmapout[$topicrow['quiz_data']['quiz_title']] = $topicrow['quiz_data'];
             }
 
             $topics[] = $topicrow;
@@ -481,9 +509,29 @@ if ($selectedbatchid !== '' && $action === 'load') {
         $haccgendata = new stdClass();
     }
 
-    $haccgendata->topics = $topics;
-    $haccgendata->quizjson = $quizmapout;
+    $haccgendata->topics = json_decode(json_encode($topics), true);
+    $haccgendata->quizjson = json_decode(json_encode($quizmapout), true);
     $haccgendata->topicsjson = $flatforui;
+    $haccgendata->canonical_payload = [
+        'topics' => $haccgendata->topics,
+        'meta' => [
+            'TOPICTITLE' => $haccgendata->TOPICTITLE ?? '',
+            'targetaudience' => $haccgendata->targetaudience ?? '',
+            'description' => $haccgendata->description ?? '',
+            'levelofunderstanding' => $haccgendata->levelofunderstanding ?? '',
+            'toneofnarrative' => $haccgendata->toneofnarrative ?? '',
+            'courseduration' => $haccgendata->courseduration ?? '',
+            'courselanguage' => $haccgendata->courselanguage ?? '',
+            'numberoftopics' => $haccgendata->numberoftopics ?? '',
+            'activelang' => $haccgendata->activelang ?? '',
+            'coursesummary' => $haccgendata->coursesummary ?? 'no',
+            'loaded_batchid' => $selectedbatchid,
+        ],
+    ];
+    $haccgendata->canonical_payload_json = json_encode(
+        $haccgendata->canonical_payload,
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
 
     \local_haccgen\session_store::set('haccgen_data', $haccgendata);
     \local_haccgen\session_store::set('haccgen_last_loaded_batchid', $selectedbatchid);
@@ -498,15 +546,16 @@ if ($selectedbatchid !== '' && $action === 'load') {
 // UI: list saved draft batches.
 $sql = "SELECT lhc.batchid,
         MAX(lhc.timemodified) AS timemodified,
+        MIN(lhc.timecreated) AS timecreated,
         COUNT(*) AS cnt,
-        u.firstname,
-        u.lastname,
-        lhc.status
+        MAX(u.firstname) AS firstname,
+        MAX(u.lastname) AS lastname,
+        MAX(lhc.status) AS status
         FROM {local_haccgen_content} lhc
         JOIN {user} u ON u.id = lhc.userid
         WHERE lhc.courseid = :c
         AND lhc.status IN ('draft', 'autosaved')
-        GROUP BY lhc.batchid, u.firstname, u.lastname, lhc.status
+        GROUP BY lhc.batchid
         ORDER BY timemodified DESC";
 
 $params = ['c' => $courseid];
@@ -538,7 +587,7 @@ if (empty($drafts)) {
 
 $formurl = new moodle_url('/local/haccgen/old_draft.php');
 echo html_writer::start_tag('form', [
-    'method' => 'get',
+    'method' => 'post',
     'action' => $formurl->out(false),
 ]);
 
@@ -585,10 +634,19 @@ foreach ($drafts as $draft) {
     if ($draft->status === 'autosaved') {
         $statuslabel = ' <span class="badge badge-info">Auto-saved</span>';
     }
-    $label = userdate($draft->timemodified) . ' - by ' . $username .
-    ' (' . $draft->cnt . ')' . $statuslabel;
 
+    $savedat = (int) ($draft->timemodified ?? 0);
+    if ($savedat <= 0) {
+        $savedat = (int) ($draft->timecreated ?? 0);
+    }
+    $savedlabel = local_haccgen_format_saved_time($savedat);
+    if ($savedlabel === '') {
+        $savedlabel = get_string('unknown', 'moodle');
+    }
+
+    $label = $savedlabel . ' - by ' . $username . " ({$draft->cnt})" . $statuslabel;
     $attrs = ['value' => $draft->batchid];
+
     if ($draft->batchid === $selectedbatchid) {
         $attrs['selected'] = 'selected';
     }

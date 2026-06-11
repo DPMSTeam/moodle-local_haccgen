@@ -146,6 +146,20 @@ export const init = () => {
             quizYesRadio.checked ? 'block' : 'none';
     };
 
+    const applyQuizRestrictions = (data) => {
+        const isSummary = !!(data && data.is_course_summary);
+        quizYesRadio.disabled = isSummary;
+        quizNoRadio.disabled = isSummary;
+        if (isSummary) {
+            quizNoRadio.checked = true;
+            quizYesRadio.checked = false;
+            quizQuestionCountGroup.style.display = 'none';
+        } else {
+            quizYesRadio.disabled = false;
+            quizNoRadio.disabled = false;
+        }
+    };
+
     quizYesRadio.addEventListener('change', toggleQuizGroup);
     quizNoRadio.addEventListener('change', toggleQuizGroup);
 
@@ -176,6 +190,7 @@ export const init = () => {
             quizYesRadio.checked = !!data.has_quiz;
             quizNoRadio.checked = !data.has_quiz;
             toggleQuizGroup();
+            applyQuizRestrictions(data);
 
             quizQuestionInput.value = data.quiz_question_count || 1;
 
@@ -210,6 +225,7 @@ export const init = () => {
         objectivesList.innerHTML = '';
         quizNoRadio.checked = true;
         toggleQuizGroup();
+        applyQuizRestrictions({});
 
         editIdInput.value = '';
         currentEditingItem = null;
@@ -227,6 +243,15 @@ export const init = () => {
             return;
         }
 
+        let existingTopic = {};
+        if (currentEditingItem) {
+            try {
+                existingTopic = JSON.parse(decodeURIComponent(currentEditingItem.dataset.topicdata || '{}'));
+            } catch (ignore) {
+                // Keep defaults when stored topic JSON is invalid.
+            }
+        }
+
         const data = {
             id: editIdInput.value || `topic-${Date.now()}`,
             title,
@@ -239,8 +264,14 @@ export const init = () => {
             quiz_question_count: quizYesRadio.checked
                 ? parseInt(quizQuestionInput.value || '1', 10)
                 : 0,
+            is_course_summary: existingTopic.is_course_summary || false,
             content: ''
         };
+
+        if (data.is_course_summary) {
+            data.has_quiz = false;
+            data.quiz_question_count = 0;
+        }
 
         const encoded = encodeURIComponent(JSON.stringify(data));
 

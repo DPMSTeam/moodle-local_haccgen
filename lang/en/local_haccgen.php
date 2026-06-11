@@ -127,6 +127,7 @@ $string['generatingwithuploaded'] = 'Generating with uploaded content';
 $string['generation_timestamps'] = 'Generation timestamps';
 $string['haccgen:manage'] = 'Manage AI course generation';
 $string['help_courseduration'] = 'Specify how long the course should be (e.g., Less than 15, 30, or 60 minutes).';
+$string['help_coursesummary'] = 'Selecting "Yes" will generate a course summary in the content outline. However, quizzes cannot be generated from this summary in the next step';
 $string['help_description'] = 'A brief summary of what this course covers.';
 $string['help_levelofunderstanding'] = 'Select the learner’s proficiency level (e.g., Beginner, Intermediate, Advanced).';
 $string['help_pdfupload'] = 'Upload a PDF file containing course material or content to extract topics from.';

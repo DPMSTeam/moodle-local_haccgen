@@ -32,6 +32,7 @@ require_once($CFG->dirroot . '/mod/quiz/locallib.php');
 require_once($CFG->dirroot . '/question/editlib.php');
 require_once($CFG->dirroot . '/question/engine/bank.php');
 
+use local_haccgen\outline_helper;
 use local_haccgen\session_store;
 try {
     $endpoint = local_haccgen_api::get_subscription_url();
@@ -336,7 +337,6 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
         $data->courselanguage = $haccgendata->courselanguage ?? 'English';
         $data->pdf_reference_url = $haccgendata->pdf_reference_url ?? '';
         $data->numberoftopics = $haccgendata->numberoftopics ?? 5;
-        $data->coursesummary = $haccgendata->coursesummary ?? 'no';
         $data->activelang = $activelang;
     } else if ($step == 4) {
         $data->coursename = $haccgendata->TOPICTITLE ?? '';
@@ -352,7 +352,6 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
         $data->pdf_reference_url = $haccgendata->pdf_reference_url ?? '';
         $data->courselanguage = $haccgendata->courselanguage ?? 'English';
         $data->numberoftopics = $haccgendata->numberoftopics ?? 5;
-        $data->coursesummary = $haccgendata->coursesummary ?? 'no';
         $data->activelang = $activelang;
     }
 
@@ -373,7 +372,11 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
         $haccgendata->customprompt = $data->customprompt ?? '';
         $haccgendata->pdf_reference_url = $data->pdf_reference_url ?? '';
         $haccgendata->activelang = $activelang;
-        $haccgendata->coursesummary = $data->coursesummary ?? 'no';  // ADD THIS LINE.
+        if ($step == 2 && isset($data->coursesummary)) {
+            $haccgendata->coursesummary = $data->coursesummary;
+        } else if (!isset($haccgendata->coursesummary)) {
+            $haccgendata->coursesummary = 'no';
+        }
         \local_haccgen\session_store::set('haccgen_data', $haccgendata);
 
         // Keep $isdraft updated from POST.
@@ -401,8 +404,8 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                                 'toneofnarrative' => $haccgendata->toneofnarrative ?? 'Formal',
                                 'courseduration' => $haccgendata->courseduration ?? 'Less than 15 minutes',
                                 'numberoftopics' => $haccgendata->numberoftopics ?? 5,
-                                'case_study_data' => $haccgendata->case_study_data ?? null,
                                 'coursesummary' => $haccgendata->coursesummary ?? 'no',
+                                'case_study_data' => $haccgendata->case_study_data ?? null,
                             ],
                         ],
                         JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
@@ -498,32 +501,22 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                     $quizmap = [];
 
                     foreach ($payloadarr['topics'] as $t) {
-                        $ttitle = (string) ($t['title'] ?? '');
-                        foreach ((array) ($t['subtopics'] ?? []) as $s) {
+                        $topic = outline_helper::parse_payload_topic($t);
+                        foreach ((array) ($topic['subtopics'] ?? []) as $s) {
+                            if (!is_array($s) || outline_helper::is_quiz_item($s)) {
+                                continue;
+                            }
                             $stitle = (string) ($s['title'] ?? '');
+                            if ($stitle === '') {
+                                continue;
+                            }
                             $content = $s['content'] ?? [];
                             $text = is_array($content) ? ($content['text'] ?? '') : (string) $content;
                             $itemid = is_array($content) ? (int) ($content['itemid'] ?? 0) : 0;
                             $topicsflat[$stitle] = ['text' => $text, 'itemid' => $itemid];
                         }
-                        $q = $t['quiz'] ?? ($t['quiz_data'] ?? null);
-                        if ($q && !empty($q['questions'])) {
-                            $qt = (string) ($q['quiz_title'] ?? $ttitle);
-                            $quizmap[$qt] = [
-                                'quiz_title' => $qt,
-                                'instructions' => (string) ($q['instructions'] ?? ''),
-                                'questions' => array_values(array_map(function ($qq, $i) {
-                                    return [
-                                        'question_id' => $qq['question_id'] ?? 'q' . ($i + 1),
-                                        'type' => $qq['type'] ?? 'multiple_choice',
-                                        'difficulty' => $qq['difficulty'] ?? 'easy',
-                                        'question' => (string) ($qq['question'] ?? ''),
-                                        'options' => array_values(array_map('strval', (array) ($qq['options'] ?? []))),
-                                        'correct_answer' => (string) ($qq['correct_answer'] ?? ($qq['answer'] ?? '')),
-                                        'explanation' => (string) ($qq['explanation'] ?? ''),
-                                    ];
-                                }, (array) ($q['questions'] ?? []), array_keys((array) ($q['questions'] ?? [])))),
-                            ];
+                        if (!empty($topic['quiz_data']['questions'])) {
+                            $quizmap[$topic['quiz_data']['quiz_title']] = $topic['quiz_data'];
                         }
                     }
 
@@ -612,7 +605,6 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                     if (!is_array($flat)) {
                         $flat = [];
                     }
-
                     $result = $basetopics ?: [['title' => 'Topic 1', 'subtopics' => []]];
                     if (!isset($result[0]['subtopics']) || !is_array($result[0]['subtopics'])) {
                         $result[0]['subtopics'] = [];
@@ -627,7 +619,6 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                             }
                         }
                     }
-
                     foreach ($flat as $rawtitle => $rawcontent) {
                         $cleantitle = mb_strtolower(trim((string) $rawtitle));
                         $newtext = is_array($rawcontent) ? ($rawcontent['text'] ?? '') : (string) $rawcontent;
@@ -653,20 +644,16 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                     return $result;
                 }
             }
-
             $norm = static function ($s) {
                 return mb_strtolower(trim((string)$s));
             };
-
             // If payload is present, use it directly.
             if ($haspayload) {
-                // Normalise to match your creation loop expectations.
                 $topics = [];
                 foreach ($payloadarr['topics'] as $t) {
-                    $topics[] = \local_haccgen\outline_helper::parse_payload_topic((array)$t);
+                    $topics[] = outline_helper::parse_payload_topic($t);
                 }
                 $log('USING_PAYLOAD_TOPICS', ['topics_total' => count($topics)]);
-
                 // Moodle objects.
                 $newcourse = get_course($courseid);
                 $module    = $DB->get_record('modules', ['name' => 'page'], '*', MUST_EXIST);
@@ -681,13 +668,11 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                     'next_sectionnumber' => $sectionnumber,
                     'existing_sections' => count($existingsections),
                 ]);
-
                 // Create sections, pages, and quizzes from the payload.
                 foreach ($topics as $topic) {
                     $topicname = $topic['title'] ?? 'Untitled Topic';
-                    $outline = \local_haccgen\outline_helper::get_creation_sequence($topic);
-                    $pagesubtopiccount = \local_haccgen\outline_helper::count_page_subtopics($topic);
-                    if ($pagesubtopiccount === 0) {
+                    $sequence = outline_helper::get_creation_sequence($topic);
+                    if (empty($sequence)) {
                         $log('ERROR topic has no subtopics', ['topic' => $topicname]);
                         throw new moodle_exception('nosubtopics', 'local_haccgen', '', 'No subtopics found for this topic.');
                     }
@@ -695,9 +680,8 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                     $log('Creating section for topic', [
                         'topic' => $topicname,
                         'sectionnumber' => $sectionnumber,
-                        'subtopics' => $pagesubtopiccount,
+                        'sequence_items' => count($sequence),
                         'quiz_included' => !empty($topic['quiz_included']),
-                        'outline_items' => count($outline),
                     ]);
 
                     $section   = course_create_section($courseid, $sectionnumber);
@@ -708,14 +692,9 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                     } else {
                         $log('WARN section creation returned empty id', ['sectionnumber' => $sectionnumber]);
                     }
-
-                    // Pages and quizzes in user-defined outline order.
-                    foreach ($outline as $outlineitem) {
-                        if (($outlineitem['type'] ?? '') === 'page') {
-                            $sub = $outlineitem['sub'] ?? [];
-                            if (\local_haccgen\outline_helper::is_quiz_item((array)$sub)) {
-                                continue;
-                            }
+                    foreach ($sequence as $step) {
+                        if (($step['type'] ?? '') === 'page') {
+                            $sub = $step['sub'] ?? [];
                             $subtopicname = $sub['title'] ?? 'Untitled Subtopic';
                             $editor = $sub['content'] ?? '';
                             if (!is_array($editor)) {
@@ -725,9 +704,9 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                             $html    = $editor['text'] ?? '';
 
                             $log('Creating page module', [
-                                'subtopic' => $subtopicname,
-                                'draftid' => $draftid,
-                                'html_length' => strlen($html),
+                            'subtopic' => $subtopicname,
+                            'draftid' => $draftid,
+                            'html_len' => strlen((string) $html),
                             ]);
 
                             $page                = new stdClass();
@@ -739,7 +718,6 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                             $page->introformat   = FORMAT_HTML;
                             $page->timemodified  = time();
                             $page->id            = $DB->insert_record('page', $page);
-
                             $cm                 = new stdClass();
                             $cm->course         = $courseid;
                             $cm->module         = $module->id;
@@ -751,23 +729,20 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                             $cm->added          = time();
                             $cm->id             = add_course_module($cm);
                             course_add_cm_to_section($courseid, $cm->id, $sectionnumber);
-
                             $log('Page CM created and added to section', [
-                                'cmid' => $cm->id,
-                                'pageid' => $page->id,
+                            'cmid' => $cm->id,
+                            'pageid' => $page->id,
                             ]);
 
                             $cmcontext  = context_module::instance($cm->id);
                             $editoropts = [
-                                'maxfiles' => 100,
-                                'context' => $cmcontext,
-                                'subdirs' => 0,
+                            'maxfiles' => 100,
+                            'context' => $cmcontext,
+                            'subdirs' => 0,
                             ];
-
                             $fs        = get_file_storage();
                             $userctx   = context_user::instance($USER->id);
                             $coursectx = context_course::instance($courseid);
-
                             // 1) Import any draftfile.php links directly into this page.
                             $draftpattern =
                             '~draftfile\.php/(\d+)/user/draft/(\d+)(/[^"\']*)?/([^"\'>\s]+)~i';
@@ -793,51 +768,51 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                                     $draftid,
                                     $filepath,
                                     $filename
-                                    );
+                                        );
 
                                     if ($src) {
                                         if (!$fs->file_exists(
-                                        $cmcontext->id,
-                                        'mod_page',
-                                        'content',
-                                        0,
-                                        '/',
-                                        $filename
-                                        )) {
-                                            $fs->create_file_from_storedfile([
-                                            'contextid' => $cmcontext->id,
-                                            'component' => 'mod_page',
-                                            'filearea' => 'content',
-                                            'itemid' => 0,
-                                            'filepath' => '/',
-                                            'filename' => $filename,
-                                            ], $src);
+                                            $cmcontext->id,
+                                            'mod_page',
+                                            'content',
+                                            0,
+                                            '/',
+                                            $filename
+                                            )) {
+                                                $fs->create_file_from_storedfile([
+                                                'contextid' => $cmcontext->id,
+                                                'component' => 'mod_page',
+                                                'filearea' => 'content',
+                                                'itemid' => 0,
+                                                'filepath' => '/',
+                                                'filename' => $filename,
+                                                ], $src);
                                         }
 
-                                        $full = '~(?<=["\'])https?://[^"\']*draftfile\.php/'
-                                        . $srcctxid . '/user/draft/' . $draftid
-                                        . preg_quote($filepath, '~')
-                                        . preg_quote($filename, '~')
-                                        . '(?:\?[^"\']*)?(?=["\'])~i';
+                                            $full = '~(?<=["\'])https?://[^"\']*draftfile\.php/'
+                                            . $srcctxid . '/user/draft/' . $draftid
+                                            . preg_quote($filepath, '~')
+                                            . preg_quote($filename, '~')
+                                            . '(?:\?[^"\']*)?(?=["\'])~i';
 
-                                        $html = preg_replace(
-                                        $full,
-                                        '@@PLUGINFILE@@/' . $filename,
-                                        $html
-                                        );
+                                            $html = preg_replace(
+                                            $full,
+                                            '@@PLUGINFILE@@/' . $filename,
+                                            $html
+                                                    );
 
-                                        $log('PAGE.DRAFT_IMPORT.OK', [
-                                            'filename' => $filename,
-                                            'from_ctx' => $srcctxid,
-                                            'draftid' => $draftid,
-                                        ]);
+                                                    $log('PAGE.DRAFT_IMPORT.OK', [
+                                                    'filename' => $filename,
+                                                    'from_ctx' => $srcctxid,
+                                                    'draftid' => $draftid,
+                                                    ]);
                                     } else {
-                                        $log('PAGE.DRAFT_IMPORT.MISS', [
-                                        'ctx' => $srcctxid,
-                                        'draftid' => $draftid,
-                                        'filepath' => $filepath,
-                                        'filename' => $filename,
-                                        ]);
+                                            $log('PAGE.DRAFT_IMPORT.MISS', [
+                                            'ctx' => $srcctxid,
+                                            'draftid' => $draftid,
+                                            'filepath' => $filepath,
+                                            'filename' => $filename,
+                                            ]);
                                     }
                                 }
                             }
@@ -856,18 +831,21 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                             foreach ($sourcefiles as $sf) {
                                 $indexbyname[mb_strtolower($sf->get_filename())] = $sf;
                             }
+
                             // Normaliser for loose matching (your keys contain colons/underscores).
-                                $normalise = function ($s) {
-                                    $s = html_entity_decode($s, ENT_QUOTES | ENT_HTML401, 'UTF-8');
-                                    $s = mb_strtolower($s);
-                                    $s = str_replace([' ', ':', '/', '\\'], '_', $s);
-                                    $s = preg_replace('~[^a-z0-9_]+~', '_', $s);
-                                    $s = preg_replace('~_+~', '_', $s);
-                                    return trim($s, '_');
-                                };
+                            $normalise = function ($s) {
+                                $s = html_entity_decode($s, ENT_QUOTES | ENT_HTML401, 'UTF-8');
+                                $s = mb_strtolower($s);
+                                $s = str_replace([' ', ':', '/', '\\'], '_', $s);
+                                $s = preg_replace('~[^a-z0-9_]+~', '_', $s);
+                                $s = preg_replace('~_+~', '_', $s);
+                                return trim($s, '_');
+                            };
+
                             $placeholderpattern =
                             '~<div[^>]*class=["\']?[^"\']*image-placeholder[^"\']*["\']?[^>]*'
                             . 'data-image(?:-filename)?=["\']([^"\']+)["\'][^>]*>.*?</div>~is';
+
                             if (preg_match_all(
                             $placeholderpattern,
                             (string) $html,
@@ -889,10 +867,12 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                                     if (isset($indexbyname[$cand])) {
                                         $src = $indexbyname[$cand];
                                     }
+
                                     if (!$src) {
                                         $nkey = $normalise(preg_replace('~\.[^.]+$~', '', $key));
                                         $src  = $indexbystem[$nkey] ?? null;
                                     }
+
                                     if (!$src) {
                                         foreach ($sourcefiles as $sf) {
                                             if (stripos($sf->get_filename(), $key) !== false) {
@@ -901,6 +881,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                                             }
                                         }
                                     }
+
                                     if (!$src) {
                                         $log('PAGE.PLACEHOLDER.SOURCE_NOT_FOUND', ['key' => $key]);
                                         continue;
@@ -912,17 +893,18 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                                         'content',
                                         0,
                                         '/',
-                                     $filename
-                                     )) {
-                                         $fs->create_file_from_storedfile([
-                                            'contextid' => $cmcontext->id,
-                                            'component' => 'mod_page',
-                                            'filearea' => 'content',
-                                            'itemid' => 0,
-                                            'filepath' => '/',
-                                            'filename' => $filename,
-                                         ], $src);
+                                        $filename
+                                    )) {
+                                        $fs->create_file_from_storedfile([
+                                        'contextid' => $cmcontext->id,
+                                        'component' => 'mod_page',
+                                        'filearea' => 'content',
+                                        'itemid' => 0,
+                                        'filepath' => '/',
+                                        'filename' => $filename,
+                                        ], $src);
                                     }
+
                                     // Swap placeholder to IMG.
                                     $img = '<p><img src="@@PLUGINFILE@@/' . s($filename) . '" alt="" /></p>';
                                     $html = str_replace($ph[0], $img, $html);
@@ -939,9 +921,11 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                             (string) $html
                             );
                             $html = preg_replace('~[?&]+$~', '', (string) $html);
+
                             // Save rewritten HTML.
                             $page->content = $html;
                             $DB->update_record('page', $page);
+
                             $finalfiles = $fs->get_area_files(
                             $cmcontext->id,
                             'mod_page',
@@ -950,6 +934,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                             'id',
                             false
                             );
+
                             $log('PAGE.FINAL_FILES', array_map(function ($f) {
                                 return [
                                 'filename' => $f->get_filename(),
@@ -966,15 +951,20 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                             'id',
                             false
                             );
+
                             if (!$files) {
                                 $log('ERROR_NO_FILES_SAVED_FOR_PAGE', [
                                 'cmid' => $cm->id,
                                 'subtopic' => $subtopicname,
                                 ]);
                             }
+
                             $log('Page content updated', ['pageid' => $page->id]);
-                        } else if (($outlineitem['type'] ?? '') === 'quiz' && !empty($outlineitem['quiz_data'])) {
-                            $quizdata = $outlineitem['quiz_data'];
+                        } else if (($step['type'] ?? '') === 'quiz') {
+                            $quizdata = $step['quiz_data'] ?? [];
+                            if (empty($quizdata['questions'])) {
+                                continue;
+                            }
 
                             $log('QUIZ.CREATE_BEGIN', [
                             'topic'            => $topicname,
@@ -983,6 +973,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                             'instructions_len' => strlen((string)($quizdata['instructions'] ?? '')),
                             'questions_count'  => count($quizdata['questions'] ?? []),
                             ]);
+
                             $quizmoduleid = $DB->get_field('modules', 'id', ['name' => 'quiz'], MUST_EXIST);
                             if (!empty($quizmoduleid)) {
                                 $quizsettings = (object)[
@@ -1005,6 +996,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                                 'timelimit'            => 0,
                                 'quizpassword'         => '',
                                 ];
+
                                 $log('QUIZ.SETTINGS', [
                                 'name'               => $quizsettings->name,
                                 'preferredbehaviour' => $quizsettings->preferredbehaviour,
@@ -1013,129 +1005,137 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                                 'questionsperpage'   => $quizsettings->questionsperpage,
                                 ]);
 
-                                  $cmquiz = add_moduleinfo($quizsettings, $newcourse);
-                                  $cmid   = is_object($cmquiz) && isset($cmquiz->coursemodule) ? (int)$cmquiz->coursemodule : 0;
-                                  $quizid = is_object($cmquiz) && isset($cmquiz->instance) ? (int)$cmquiz->instance : 0;
+                                        $cmquiz = add_moduleinfo($quizsettings, $newcourse);
+                                        $cmid = is_object($cmquiz) && isset($cmquiz->coursemodule)
+                                        ? (int) $cmquiz->coursemodule: 0;                           
+                                        $quizid = is_object($cmquiz) && isset($cmquiz->instance) ? (int)$cmquiz->instance : 0;
 
-                                  $log('QUIZ.ADDED', ['cmid' => $cmid, 'quizid' => $quizid, 'ok' => (bool)$quizid]);
+                                $log('QUIZ.ADDED', ['cmid' => $cmid, 'quizid' => $quizid, 'ok' => (bool)$quizid]);
                                 if ($quizid) {
                                     // Review settings.
                                     $okupdate = $DB->update_record('quiz', [
-                                        'id'                      => $quizid,
-                                        'reviewattempt'           => 69632,
-                                        'reviewcorrectness'       => 4096,
-                                        'reviewmaxmarks'          => 4096,
-                                        'reviewmarks'             => 4096,
-                                        'reviewspecificfeedback'  => 4096,
-                                        'reviewgeneralfeedback'   => 4096,
-                                        'reviewrightanswer'       => 4096,
-                                        'reviewoverallfeedback'   => 4096,
+                                    'id'                      => $quizid,
+                                    'reviewattempt'           => 69632,
+                                    'reviewcorrectness'       => 4096,
+                                    'reviewmaxmarks'          => 4096,
+                                    'reviewmarks'             => 4096,
+                                    'reviewspecificfeedback'  => 4096,
+                                    'reviewgeneralfeedback'   => 4096,
+                                    'reviewrightanswer'       => 4096,
+                                    'reviewoverallfeedback'   => 4096,
                                     ]);
-                                    $log('QUIZ.REVIEW_SETTINGS_UPDATED', ['quizid' => $quizid, 'ok' => (bool)$okupdate]);
-                                    // Context & default category.
-                                    // Context and default category.
-                                    $realcm = get_coursemodule_from_instance(
-                                    'quiz',
-                                    $quizid,
-                                    $courseid,
-                                    false,
-                                    MUST_EXIST
+                                        $log('QUIZ.REVIEW_SETTINGS_UPDATED', ['quizid' => $quizid, 'ok' => (bool)$okupdate]);
+
+                                        // Context & default category.
+                                        // Context and default category.
+                                        $realcm = get_coursemodule_from_instance(
+                                        'quiz',
+                                        $quizid,
+                                        $courseid,
+                                        false,
+                                        MUST_EXIST
                                     );
-                                    $quiz = $DB->get_record('quiz', ['id' => $quizid], '*', MUST_EXIST);
-                                    $quizctx = context_module::instance($realcm->id);
+                                        $quiz = $DB->get_record('quiz', ['id' => $quizid], '*', MUST_EXIST);
+                                        $quizctx = context_module::instance($realcm->id);
 
-                                    $log('QUIZ.CONTEXT', [
-                                    'cmid' => $realcm->id,
-                                    'contextid' => $quizctx->id,
-                                    ]);
-                                    $catobj = question_make_default_categories([$quizctx]);
+                                        $log('QUIZ.CONTEXT', [
+                                        'cmid' => $realcm->id,
+                                        'contextid' => $quizctx->id,
+                                        ]);
+
+                                        $catobj = question_make_default_categories([$quizctx]);
                                     if (!empty($catobj->id)) {
-                                        $catid = (int) $catobj->id;
-                                        $log('QUIZ.CATEGORY_READY', ['catid' => $catid]);
+                                            $catid = (int) $catobj->id;
+                                            $log('QUIZ.CATEGORY_READY', ['catid' => $catid]);
 
-                                        // Import MCQ questions.
-                                        $qsaved = 0;
-                                        $qskipped = 0;
+                                            // Import MCQ questions.
+                                            $qsaved = 0;
+                                            $qskipped = 0;
 
                                         foreach ($quizdata['questions'] as $index => $qdata) {
-                                            $qtypename = $qdata['type'] ?? 'multiple_choice';
+                                                $qtypename = $qdata['type'] ?? 'multiple_choice';
                                             if ($qtypename !== 'multiple_choice') {
-                                                $qskipped++;
-                                                $log('QUIZ.Q.SKIP_UNSUPPORTED', [
-                                                'index' => $index,
-                                                'type' => $qtypename,
-                                                ]);
-                                                  continue;
+                                                    $qskipped++;
+                                                    $log('QUIZ.Q.SKIP_UNSUPPORTED', [
+                                                    'index' => $index,
+                                                    'type' => $qtypename,
+                                                        ]);
+                                                            continue;
                                             }
-                                            $options = $qdata['options'] ?? [];
-                                            $correctletter = $qdata['correct_answer'] ?? '';
-                                            $form = new stdClass();
-                                            $form->category = $catid;
-                                            $form->contextid = $quizctx->id;
-                                            $form->qtype = 'multichoice';
-                                            $form->name = $qdata['question'];
-                                            $form->questiontext = [
-                                            'text' => $qdata['question'],
-                                            'format' => FORMAT_HTML,
-                                            ];
-                                            $form->generalfeedback = [
-                                            'text' => $qdata['explanation'] ?? '',
-                                            'format' => FORMAT_HTML,
-                                            ];
-                                            $form->defaultmark = 1;
-                                            $form->penalty = 0.1;
-                                            $form->single = 1;
-                                            $form->shuffleanswers = 1;
-                                            $form->answernumbering = 'none';
-                                            $form->correctfeedback = ['text' => '', 'format' => FORMAT_HTML];
-                                            $form->partiallycorrectfeedback = ['text' => '', 'format' => FORMAT_HTML];
-                                            $form->incorrectfeedback = ['text' => '', 'format' => FORMAT_HTML];
-                                            $form->layout = 0;
-                                            $form->showstandardinstruction = 1;
-                                            $form->shownumcorrect = 1;
-                                            $form->answer = [];
-                                            $form->fraction = [];
-                                            $form->feedback = [];
-                                            foreach ($options as $i => $optiontext) {
-                                                $letter = chr(65 + $i);
-                                                $iscorrect = strtoupper((string) $correctletter) === $letter;
 
-                                                $form->answer[] = ['text' => $optiontext, 'format' => FORMAT_HTML];
-                                                $form->fraction[] = $iscorrect ? 1 : 0;
-                                                $form->feedback[] = [
-                                                'text' => $iscorrect ? get_string('answercorrect', 'local_haccgen')
-                                                    : get_string('answerincorrect', 'local_haccgen'),
+                                                $options = $qdata['options'] ?? [];
+                                                $correctletter = $qdata['correct_answer'] ?? '';
+
+                                                $form = new stdClass();
+                                                $form->category = $catid;
+                                                $form->contextid = $quizctx->id;
+                                                $form->qtype = 'multichoice';
+                                                $form->name = $qdata['question'];
+                                                $form->questiontext = [
+                                                'text' => $qdata['question'],
                                                 'format' => FORMAT_HTML,
                                                 ];
-                                            }
-                                            try {
-                                                $qtype = question_bank::get_qtype('multichoice');
-                                                $question = $qtype->save_question(
-                                                (object) ['category' => $catid, 'qtype' => 'multichoice'],
-                                                $form
-                                                  );
-                                                  quiz_add_quiz_question($question->id, $quiz);
+                                                $form->generalfeedback = [
+                                                'text' => $qdata['explanation'] ?? '',
+                                                'format' => FORMAT_HTML,
+                                                ];
+                                                $form->defaultmark = 1;
+                                                $form->penalty = 0.1;
+                                                $form->single = 1;
+                                                $form->shuffleanswers = 1;
+                                                $form->answernumbering = 'none';
+                                                $form->correctfeedback = ['text' => '', 'format' => FORMAT_HTML];
+                                                $form->partiallycorrectfeedback = ['text' => '', 'format' => FORMAT_HTML];
+                                                $form->incorrectfeedback = ['text' => '', 'format' => FORMAT_HTML];
+                                                $form->layout = 0;
+                                                $form->showstandardinstruction = 1;
+                                                $form->shownumcorrect = 1;
+                                                $form->answer = [];
+                                                $form->fraction = [];
+                                                $form->feedback = [];
 
-                                                  $qsaved++;
-                                                  $log('QUIZ.Q.SAVED', [
-                                                  'index' => $index,
-                                                  'questionid' => $question->id,
-                                                  ]);
-                                            } catch (Exception $e) {
-                                                $qskipped++;
-                                                $log('QUIZ.Q.ERROR_SAVE', [
-                                                'index' => $index,
-                                                'message' => $e->getMessage(),
-                                                ]);
-                                            }
+                                                foreach ($options as $i => $optiontext) {
+                                                        $letter = chr(65 + $i);
+                                                        $iscorrect = strtoupper((string) $correctletter) === $letter;
+
+                                                        $form->answer[] = ['text' => $optiontext, 'format' => FORMAT_HTML];
+                                                        $form->fraction[] = $iscorrect ? 1 : 0;
+                                                        $form->feedback[] = [
+                                                        'text' => $iscorrect ? get_string('answercorrect', 'local_haccgen')
+                                                    : get_string('answerincorrect', 'local_haccgen'),
+                                                    'format' => FORMAT_HTML,
+                                                        ];
+                                                }
+
+                                                try {
+                                                    $qtype = question_bank::get_qtype('multichoice');
+                                                    $question = $qtype->save_question(
+                                                    (object) ['category' => $catid, 'qtype' => 'multichoice'],
+                                                    $form
+                                                            );
+                                                            quiz_add_quiz_question($question->id, $quiz);
+
+                                                        $qsaved++;
+                                                        $log('QUIZ.Q.SAVED', [
+                                                        'index' => $index,
+                                                        'questionid' => $question->id,
+                                                            ]);
+                                                } catch (Exception $e) {
+                                                    $qskipped++;
+                                                    $log('QUIZ.Q.ERROR_SAVE', [
+                                                    'index' => $index,
+                                                    'message' => $e->getMessage(),
+                                                    ]);
+                                                }
                                         }
-                                        $log('QUIZ.CREATE_SUMMARY', [
-                                        'quizid' => $quizid,
-                                        'saved' => $qsaved,
-                                        'skipped' => $qskipped,
-                                        ]);
+
+                                            $log('QUIZ.CREATE_SUMMARY', [
+                                            'quizid' => $quizid,
+                                            'saved' => $qsaved,
+                                            'skipped' => $qskipped,
+                                            ]);
                                     } else {
-                                        $log('QUIZ.ERROR_NO_CATEGORY', ['contextid' => $quizctx->id]);
+                                            $log('QUIZ.ERROR_NO_CATEGORY', ['contextid' => $quizctx->id]);
                                     }
                                 } else {
                                     $log('QUIZ.ERROR_ADD_MODULEINFO_FAILED', ['topic' => $topicname]);
@@ -1145,6 +1145,7 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
                             }
                         }
                     }
+
                     $sectionnumber++;
                     $log('Finished topic section', ['next_sectionnumber' => $sectionnumber]);
                 }
@@ -1271,7 +1272,6 @@ if (!empty($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
         }
     }
 }
-
 $stepstates = [
     'is_step1_active' => $step >= 1,
     'is_step2_active' => $step >= 2,
@@ -1283,7 +1283,6 @@ $stepstates = [
     'is_connector3_active' => $step >= 4,
 
 ];
-
 $formdata = [
     'action' => new moodle_url('/local/haccgen/manage.php', ['id' => $courseid, 'step' => $step]),
     'cancelurl' => new moodle_url('/course/view.php', ['id' => $courseid]),
@@ -1330,7 +1329,7 @@ $formdata = [
     'is_duration_10minutes' => ($haccgendata->courseduration ?? '') === 'Less than 10 minutes',
     'is_duration_15minutes' => ($haccgendata->courseduration ?? '') === 'Less than 15 minutes',
     'is_duration_30minutes' => ($haccgendata->courseduration ?? '') === 'Less than 30 minutes',
-    'has_coursesummary' => !empty($haccgendata->coursesummary),
+    'has_coursesummary' => in_array($haccgendata->coursesummary ?? '', ['yes', 'no'], true),
     'is_summary_yes' => ($haccgendata->coursesummary ?? '') === 'yes',
     'is_summary_no' => ($haccgendata->coursesummary ?? '') === 'no',
     'courselanguage' => $haccgendata->courselanguage ?? 'English',
@@ -1343,7 +1342,6 @@ $formdata = [
     'sesskey'                   => sesskey(),
 
 ];
-
 if ($step == 3) {
     $data = new stdClass();
     $data->coursename = $haccgendata->TOPICTITLE ?? '';
@@ -1359,8 +1357,6 @@ if ($step == 3) {
     $data->numberoftopics = $haccgendata->numberoftopics ?? 5;
     $data->coursesummary = $haccgendata->coursesummary ?? 'no';  // ADD THIS LINE.
     $data->pdf_reference_url = $haccgendata->pdf_reference_url ?? '';
-
-
     // Validate required fields.
     $required = ['coursename', 'targetaudience', 'levelofunderstanding', 'toneofnarrative', 'courseduration', 'numberoftopics'];
 
@@ -1396,18 +1392,19 @@ if ($step == 3) {
     }
     if (empty($formdata['errors'])) {
         try {
-
             // Single API call with timing.
             $topicgenerationstart = microtime(true);
             $result = local_haccgen_api::generate_subtopics_only($data);
             $topicgenerationduration = round(microtime(true) - $topicgenerationstart, 1);
 
+            $coursesummarychoice = $haccgendata->coursesummary ?? $data->coursesummary ?? 'no';
             $subtopics = $result['subtopics'];
             $casestudy = $result['case_study_data'] ?? null;
             $learningobjectives1 = $result['learning_objectives'] ?? [];
 
             // Store in session (AFTER actual data retrieved).
             $haccgendata->course_title = $data->coursename;
+            $haccgendata->coursesummary = $coursesummarychoice;
             $haccgendata->raw_subtopics = $subtopics;
             $haccgendata->courselanguage = $data->courselanguage;
             $haccgendata->numberoftopics = $data->numberoftopics;
@@ -1426,31 +1423,14 @@ if ($step == 3) {
             // Persist so step 3 "Save" (job queue) has case_study_data for the adhoc task.
             \local_haccgen\session_store::set('haccgen_data', $haccgendata);
 
-            // Format topics.
-            $formdata['topics'] = array_map(function ($index, $subtopic) use ($subtopics) {
-                $topicdata = [
-                    'id' => $subtopic['id'] ?? uniqid('topic_'),
-                    'title' => $subtopic['title'] ?? 'Untitled',
-                    'description' => $subtopic['description'] ?? '',
-                    'estimated_duration' => $subtopic['estimated_duration'] ?? '',
-                    'learning_objectives' => $subtopic['learning_objectives'] ?? [],
-                ];
-                if (!empty($subtopic['is_summary_topic'])) {
-                    $topicdata['is_summary_topic'] = true;
-                }
-                if (!empty($subtopic['content_type'])) {
-                    $topicdata['content_type'] = $subtopic['content_type'];
-                }
-
-                return array_merge($topicdata, [
-                    'is_first' => $index === 0,
-                    'is_last' => $index === count($subtopics) - 1,
-                    '@index_plus_one' => $index + 1,
-                    'encoded_topicdata' => rawurlencode(json_encode(
-                        $topicdata,
-                        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-                    )),
-                ]);
+            // Format topics (preserve course-summary structure from API).
+            $formdata['topics'] = array_map(function ($index, $subtopic) use ($subtopics, $coursesummarychoice) {
+                return local_haccgen_format_step3_outline_topic(
+                    $subtopic,
+                    $index,
+                    count($subtopics),
+                    $coursesummarychoice
+                );
             }, array_keys($subtopics), $subtopics);
 
             $formdata['has_topics'] = true;
@@ -1498,45 +1478,97 @@ if ($step == 3) {
         ]);
     }
 } else if ($step == 4) {
+    // SHOW AUTO-SAVE SUCCESS NOTIFICATION .
     $justgenerated = optional_param('generated', 0, PARAM_INT);
-    $latestdraft = $DB->get_record_sql(
-        "SELECT * FROM {local_haccgen_content}
-         WHERE courseid = ?
-         AND userid = ?
-         AND status IN ('draft', 'autosaved')
-         ORDER BY timemodified DESC
-         LIMIT 1",
-        [$courseid, $USER->id]
-    );
-    if ($latestdraft && !empty($latestdraft->topicsjson)) {
-        $dbtopics = json_decode($latestdraft->topicsjson, true);
-        if (is_array($dbtopics) && !empty($dbtopics)) {
-            $haccgendata->topics = $dbtopics;
-            $formdata['topics'] = $dbtopics;
-            // Also restore quiz data if exists.
-            if (!empty($latestdraft->quizjson)) {
-                $dbquizzes = json_decode($latestdraft->quizjson, true);
-                if (is_array($dbquizzes)) {
-                    $haccgendata->quizjson = $dbquizzes;
-                    $quizzcontents = $dbquizzes; // For frontend.
-                }
+    $loaddraft = optional_param('loaddraft', 0, PARAM_BOOL);
+
+    $applycontentrecord = static function (stdClass $row) use (&$haccgendata, &$quizcontentss): bool {
+        if (empty($row->topicsjson)) {
+            return false;
+        }
+        $dbtopics = json_decode($row->topicsjson, true);
+        if (!is_array($dbtopics) || empty($dbtopics)) {
+            return false;
+        }
+        // Deep copy so later in-memory edits never alias stored JSON rows.
+        $haccgendata->topics = json_decode(json_encode($dbtopics), true);
+        if (!empty($row->quizjson)) {
+            $dbquizzes = json_decode($row->quizjson, true);
+            if (is_array($dbquizzes)) {
+                $haccgendata->quizjson = json_decode(json_encode($dbquizzes), true);
+                $quizcontentss = $haccgendata->quizjson;
             }
+        }
+        return true;
+    };
+    $loadedbatchraw = \local_haccgen\session_store::get('haccgen_last_loaded_batchid');
+    $loadedbatchid = is_string($loadedbatchraw)
+        ? preg_replace('/[^A-Za-z0-9._-]/', '', $loadedbatchraw)
+        : '';
+    $loadedbatchid = core_text::substr($loadedbatchid, 0, 40);
+    // LOAD TOPICS FOR STEP 4 (draft isolation) .
+    if ($justgenerated) {
+        \local_haccgen\session_store::delete('haccgen_last_loaded_batchid');
+        $formdata['topics'] = $haccgendata->topics ?? [];
+    } else if ($loaddraft && $loadedbatchid !== '') {
+        // User picked a specific draft: always hydrate from that batch, not the latest row.
+        $row = $DB->get_record_sql(
+            "SELECT *
+               FROM {local_haccgen_content}
+              WHERE courseid = :courseid
+                AND userid = :userid
+                AND batchid = :batchid
+                AND status IN ('draft', 'autosaved')",
+            [
+                'courseid' => $courseid,
+                'userid' => $USER->id,
+                'batchid' => $loadedbatchid,
+            ],
+            IGNORE_MISSING
+        );
+        if ($row && $applycontentrecord($row)) {
             \local_haccgen\session_store::set('haccgen_data', $haccgendata);
         }
+        $formdata['topics'] = $haccgendata->topics ?? [];
+    } else if ($loadedbatchid !== '' && !empty($haccgendata->topics)) {
+        // Continue editing the loaded draft already held in session (e.g. after reorder).
+        $formdata['topics'] = $haccgendata->topics;
+    } else if (!empty($haccgendata->topics)) {
+        // In-progress session from generation or a prior edit; do not replace with latest DB draft.
+        $formdata['topics'] = $haccgendata->topics;
     } else {
+        // No session topics: fall back to the most recently saved draft/autosave.
+        $latestdraft = $DB->get_record_sql(
+            "SELECT *
+               FROM {local_haccgen_content}
+              WHERE courseid = ?
+                AND userid = ?
+                AND status IN ('draft', 'autosaved')
+              ORDER BY timemodified DESC
+              LIMIT 1",
+            [$courseid, $USER->id]
+        );
+        if ($latestdraft && $applycontentrecord($latestdraft)) {
+            \local_haccgen\session_store::set('haccgen_data', $haccgendata);
+            if (!empty($latestdraft->batchid)) {
+                \local_haccgen\session_store::set('haccgen_last_loaded_batchid', $latestdraft->batchid);
+            }
+        }
         $formdata['topics'] = $haccgendata->topics ?? [];
     }
+
     if ($justgenerated) {
         \core\notification::success(get_string('autosavedsuccess', 'local_haccgen'));
     } else {
         $recentautosave = $DB->get_record_sql(
-            "SELECT * FROM {local_haccgen_content}
-             WHERE courseid = ?
-             AND userid = ?
-             AND status = 'autosaved'
-             AND timemodified > ?
-             ORDER BY timemodified DESC
-             LIMIT 1",
+            "SELECT *
+               FROM {local_haccgen_content}
+              WHERE courseid = ?
+                AND userid = ?
+                AND status = 'autosaved'
+                AND timemodified > ?
+              ORDER BY timemodified DESC
+              LIMIT 1",
             [$courseid, $USER->id, time() - 30]
         );
 
@@ -1545,22 +1577,11 @@ if ($step == 3) {
             set_user_preference('haccgen_autosave_notified_' . $courseid, true);
         }
     }
-    $loaddraft = optional_param('loaddraft', 0, PARAM_BOOL);
-    if ($loaddraft) {
-        $draftdata = \local_haccgen\session_store::get('haccgen_draft_data');
-        if (!empty($draftdata) && is_array($draftdata)) {
-            $haccgendata->topics = $draftdata['topics'] ?? [];
-            $haccgendata->quizjson = $draftdata['quizzes'] ?? [];
-            \local_haccgen\session_store::set('haccgen_data', $haccgendata);
-            \local_haccgen\session_store::delete('haccgen_draft_data');
-        }
-    }
+
     $formdata['topics'] = $haccgendata->topics ?? [];
     // Content generation timing.
-    if (
-    isset($haccgendata->last_content_generation_duration_seconds)
-    && $haccgendata->last_content_generation_duration_seconds >= 0
-    ) {
+    if (isset($haccgendata->last_content_generation_duration_seconds)
+    && $haccgendata->last_content_generation_duration_seconds >= 0) {
         $secs = (float) $haccgendata->last_content_generation_duration_seconds;
         $durationtext = ($secs >= 60)
             ? get_string('duration_min_sec', 'local_haccgen', (object) [
@@ -1568,68 +1589,18 @@ if ($step == 3) {
                 'sec' => (int) round($secs % 60),
             ])
             : get_string('duration_sec_only', 'local_haccgen', (object) ['sec' => (int) round($secs)]);
-        $formdata['content_generation_completed_in_text'] = get_string(
+          $formdata['content_generation_completed_in_text'] = get_string(
             'content_generation_completed_in',
             'local_haccgen',
             $durationtext
-        );
+          );
     }
     // PROCESS TOPICS (Build content maps).
-    $subtopiccontentmap = [];
     $quizcontentmap = [];
     $learningobjectivesmap = [];
     $topics = $formdata['topics'] ?? [];
-    // I18n labels function.
-    /**
-     * Returns translated labels for supported languages.
-     *
-     * @param string $lang Language name.
-     * @return array
-     */
-    function haccgen_i18n_labels(string $lang): array {
-        $lang = trim($lang);
-        $labels = [
-            'about' => 'About this course',
-            'learning_objectives_heading' => 'Learning objectives',
-            'learning_objectives_prefix' => 'Learning objectives - ',
-        ];
-        switch ($lang) {
-            case 'हिन्दी (Hindi)':
-                return [
-                    'about' => 'इस पाठ्यक्रम के बारे में',
-                    'learning_objectives_heading' => 'सीखने के उद्देश्य',
-                    'learning_objectives_prefix' => 'सीखने के उद्देश्य - ',
-                ];
-            case 'తెలుగు (Telugu)':
-                return [
-                    'about' => 'ఈ కోర్సు గురించి',
-                    'learning_objectives_heading' => 'అభ్యాస లక్ష్యాలు',
-                    'learning_objectives_prefix' => 'అభ్యాస లక్ష్యాలు - ',
-                ];
-            case 'தமிழ் (Tamil)':
-                return [
-                    'about' => 'இந்த பாடநெறி பற்றி',
-                    'learning_objectives_heading' => 'கற்றல் நோக்கங்கள்',
-                    'learning_objectives_prefix' => 'கற்றல் நோக்கங்கள் - ',
-                ];
-            case 'ಕನ್ನಡ (Kannada)':
-                return [
-                    'about' => 'ಈ ಕೋರ್ಸ್ ಬಗ್ಗೆ',
-                    'learning_objectives_heading' => 'ಕಲಿಕೆಯ ಉದ್ದೇಶಗಳು',
-                    'learning_objectives_prefix' => 'ಕಲಿಕೆಯ ಉದ್ದೇಶಗಳು - ',
-                ];
-            case 'বাংলা (Bengali)':
-                return [
-                    'about' => 'এই কোর্স সম্পর্কে',
-                    'learning_objectives_heading' => 'শেখার উদ্দেশ্য',
-                    'learning_objectives_prefix' => 'শেখার উদ্দেশ্য - ',
-                ];
-            default:
-                return $labels;
-        }
-    }
     $lang = $haccgendata->activelang ?? 'English';
-    $labels = haccgen_i18n_labels($lang);
+    $labels = local_haccgen_i18n_labels($lang);
     // Process each topic.
     for ($t = 0; $t < count($topics); $t++) {
         $topic = $topics[$t];
@@ -1638,21 +1609,25 @@ if ($step == 3) {
         $existingsubs = $topic['subtopics'] ?? [];
 
         foreach ($existingsubs as $s => $sub) {
-            if (\local_haccgen\outline_helper::is_quiz_item($sub)) {
+            if (outline_helper::is_quiz_item($sub)) {
                 $processedsubtopics[] = $sub;
                 continue;
             }
+
             $displaytitle = $sub['title'] ?? "Untitled Subtopic";
+
             if (!empty($sub['learning_objectives'])) {
                 $objectives = array_map('strval', $sub['learning_objectives']);
                 $sub['json_learning_objectives'] = json_encode($objectives, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 $learningobjectivesmap[$displaytitle] = $objectives;
                 $topicobjectives = array_merge($topicobjectives, $objectives);
             }
+
             $contenthtml = $sub['content_html'] ?? ($sub['content']['text'] ?? '');
             if ($contenthtml === '') {
                 $contenthtml = '<p>' . get_string('nocontentavailable', 'local_haccgen') . '</p>';
             }
+
             $subtopiccontentmap[$displaytitle] = $contenthtml;
             $sub['content_html'] = $sub['content_html'] ?? $contenthtml;
             if (empty($sub['content']['text'])) {
@@ -1660,85 +1635,53 @@ if ($step == 3) {
             }
             $processedsubtopics[] = $sub;
         }
+
         $topic['subtopics'] = $processedsubtopics;
-        $topic['outline_items'] = \local_haccgen\outline_helper::build_outline_items_for_display($topic);
         $topics[$t] = $topic;
     }
     $formdata['topics'] = $topics;
-    // ADD "ABOUT THIS COURSE" ONLY ON FRESH GENERATION.
-    $abouttitle = $labels['about'] ?? 'About this course';
-    $aboutexists = false;
-    // Check if the about course already exists in the topics.
-    if (!empty($formdata['topics']) && is_array($formdata['topics'])) {
-        foreach ($formdata['topics'] as $t) {
-            if (!empty($t['title']) && trim((string)$t['title']) === $abouttitle) {
-                $aboutexists = true;
-                $subs = $t['subtopics'] ?? [];
-                if (!empty($subs[0]['content_html'])) {
-                    $subtopiccontentmap[$abouttitle] = $subs[0]['content_html'];
-                }
-                break;
-            }
-        }
-    }
-    // Determine if this is a fresh generation from consume_job.php.
+    // ADD "ABOUT THIS COURSE" ON FRESH GENERATION.
+    $abouttitle = $labels['about'] ?? get_string('aboutthiscourse', 'local_haccgen');
     $isfreshgeneration = !empty($haccgendata->isfreshgeneration) && $haccgendata->isfreshgeneration === true;
     $alreadyaddedinsession = !empty($haccgendata->about_course_added);
-    // ONLY ADD if:.
-    // 1. This is a fresh generation (from consume_job.php).
-    // 2. We haven't already added it in this session.
-    // 3. It doesn't already exist in the topics array.
-    // 4. We have course-level learning objectives to display.
-    if ($isfreshgeneration && !$alreadyaddedinsession && !$aboutexists && !empty($haccgendata->learning_objectives1)) {
-        $courselevelobjectives = $haccgendata->learning_objectives1;
-        if (is_array($courselevelobjectives)) {
-            $courselevelcontent = '<ul>';
-            foreach ($courselevelobjectives as $obj) {
-                $courselevelcontent .= '<li>' . htmlspecialchars($obj) . '</li>';
+    $shouldaddabout = ($justgenerated || $isfreshgeneration)
+        && !$alreadyaddedinsession
+        && !local_haccgen_topics_have_about($formdata['topics'] ?? [], $abouttitle);
+
+    if ($shouldaddabout) {
+        $beforecount = count($formdata['topics'] ?? []);
+        $formdata['topics'] = local_haccgen_prepend_about_course_topic(
+            $formdata['topics'] ?? [],
+            $haccgendata,
+            $OUTPUT
+        );
+
+        if (count($formdata['topics']) > $beforecount) {
+            $aboutsub = $formdata['topics'][0]['subtopics'][0] ?? [];
+            $abouthtml = $aboutsub['content_html'] ?? ($aboutsub['content']['text'] ?? '');
+            if ($abouthtml !== '') {
+                $subtopiccontentmap[$abouttitle] = $abouthtml;
             }
-            $courselevelcontent .= '</ul>';
-        } else {
-            $courselevelcontent = htmlspecialchars((string)$courselevelobjectives);
+            $haccgendata->about_course_added = true;
         }
-        $previewcontext = [
-            'TOPICTITLE' => $formdata['TOPICTITLE'] ?? '',
-            'targetaudience' => $formdata['targetaudience'] ?? '',
-            'levelofunderstanding' => $formdata['levelofunderstanding'] ?? '',
-            'toneofnarrative' => $formdata['toneofnarrative'] ?? '',
-            'courseduration' => $formdata['courseduration'] ?? '',
-            'coursesummary' => $formdata['coursesummary'] ?? 'no',
-         'pdfuploaded' => $formdata['pdfuploaded'] ?? '',
-            'audiencetags' => $formdata['audiencetags'] ?? [],
-            'objectives_html' => $courselevelcontent,
-            'learning_objectives_heading' => $labels['learning_objectives_heading'] ?? 'Learning objectives',
-        ];
-        $previewhtml = $OUTPUT->render_from_template('local_haccgen/preview_course', $previewcontext);
-        $courseoverviewtopic = [
-            'title' => $abouttitle,
-            'subtopics' => [
-            [
-                'title' => $abouttitle,
-                'content_html' => $previewhtml,
-                'content' => ['text' => $previewhtml, 'itemid' => 0],
-                'examples' => [],
-            ],
-            ],
-            'outline_items' => [
-            [
-                'is_quiz' => false,
-                'title' => $abouttitle,
-            ],
-            ],
-        ];
-        $subtopiccontentmap[$abouttitle] = $previewhtml;
-        array_unshift($formdata['topics'], $courseoverviewtopic);
-        // Mark as added so we don't add again.
-        $haccgendata->about_course_added = true;
+    } else if (local_haccgen_topics_have_about($formdata['topics'] ?? [], $abouttitle)) {
+        foreach ($formdata['topics'] as $t) {
+            if (trim((string) ($t['title'] ?? '')) !== $abouttitle) {
+                continue;
+            }
+            $subs = $t['subtopics'] ?? [];
+            if (!empty($subs[0]['content_html'])) {
+                $subtopiccontentmap[$abouttitle] = $subs[0]['content_html'];
+            }
+            break;
+        }
     }
-    // Clear the fresh generation flag after processing (prevents re-adding on page refresh).
-    if ($isfreshgeneration) {
+
+    if ($isfreshgeneration || $justgenerated) {
         $haccgendata->isfreshgeneration = false;
     }
+    $haccgendata->topics = $formdata['topics'];
+    \local_haccgen\session_store::set('haccgen_data', $haccgendata);
     // Build quiz content map.
     $quizcontentmap = [];
     $quizlist = [];
@@ -1770,11 +1713,11 @@ if ($step == 3) {
     // Calculate totals.
     $totalslides = 0;
     $totalquizzes = 0;
-    foreach ($formdata['topics'] as $topicindex => $topic) {
-        $totalslides += \local_haccgen\outline_helper::count_page_subtopics($topic);
+    foreach ($formdata['topics'] as $topic) {
+        $totalslides += outline_helper::count_page_subtopics($topic);
         if (!empty($topic['quiz_data']['questions']) && count($topic['quiz_data']['questions']) > 0) {
             $totalquizzes++;
-        } else if (!empty($topic['quiz']['questions']) && count($topic['quiz']['questions']) > 0) {
+        } elseif (!empty($topic['quiz']['questions']) && count($topic['quiz']['questions']) > 0) {
             $totalquizzes++;
         }
     }
@@ -1804,13 +1747,11 @@ if ($step == 3) {
     $formdata['hamburger_enabled'] = true;
     $formdata['course_fullname'] = $course->fullname;
     $formdata['user_fullname'] = fullname($USER);
-    // THESE ARE THE MOST IMPORTANT - topics_for_menu is what your template uses.
-    foreach ($formdata['topics'] as $menutopicindex => &$menutopic) {
-        if (empty($menutopic['outline_items'])) {
-            $menutopic['outline_items'] = \local_haccgen\outline_helper::build_outline_items_for_display($menutopic);
-        }
+    foreach ($formdata['topics'] as &$menutopic) {
+        $menutopic['outline_items'] = outline_helper::build_outline_items_for_display($menutopic);
     }
     unset($menutopic);
+    // THESE ARE THE MOST IMPORTANT - topics_for_menu is what your template uses.
     $formdata['topics_for_menu'] = $formdata['topics'];
     $formdata['topics_json_for_menu'] = json_encode($formdata['topics'], JSON_UNESCAPED_UNICODE);
     $formdata['topicsjson_for_menu'] = $formdata['topics_json_for_menu'];
@@ -1822,7 +1763,7 @@ if ($step == 3) {
     $totalsubtopics = 0;
     $totalquizzes = 0;
     foreach ($formdata['topics'] as $topic) {
-        $totalsubtopics += \local_haccgen\outline_helper::count_page_subtopics($topic);
+        $totalsubtopics += outline_helper::count_page_subtopics($topic);
         if (!empty($topic['quiz_data']) || !empty($topic['quiz'])) {
             $totalquizzes++;
         }
@@ -1830,7 +1771,13 @@ if ($step == 3) {
     $formdata['totaltopics'] = $totaltopics;
     $formdata['totalsubtopics'] = $totalsubtopics;
     $formdata['totalquizzes'] = $totalquizzes;
-    // END HAMBURGER MENU DATA.
+    // END HAMBURGER MENU DATA .
+}
+if (!isset($labels)) {
+    $lang = $haccgendata->activelang ?? $haccgendata->courselanguage ?? 'English';
+    $labels = local_haccgen_i18n_labels($lang);
+} else if (!isset($lang)) {
+    $lang = $haccgendata->activelang ?? $haccgendata->courselanguage ?? 'English';
 }
 $formdata['courseid'] = $courseid;
 $formdata['hasdraft'] = $hasdraft;
@@ -1843,10 +1790,12 @@ $formdata['targetaudience_helpicon'] = [
     'text' => get_string('help_targetaudience', 'local_haccgen'),
     'component' => 'local_haccgen',
 ];
+
 $formdata['description_helpicon'] = [
     'text' => get_string('help_description', 'local_haccgen'),
     'component' => 'local_haccgen',
 ];
+
 $formdata['pdfupload_helpicon'] = [
     'text' => get_string('help_pdfupload', 'local_haccgen'),
     'component' => 'local_haccgen',
@@ -1873,6 +1822,7 @@ $formdata['statusactive'] = $statusactive;
 $formdata['labels'] = $labels;
 $formdata['activelang'] = $lang;
 $formdata['sesskey'] = sesskey();
+
 echo $OUTPUT->header();
 if ($step == 1) {
     echo $OUTPUT->render_from_template('local_haccgen/ai_form', $formdata);
