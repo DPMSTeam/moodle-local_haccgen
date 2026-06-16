@@ -92,6 +92,10 @@ Configure:
 - 90 minutes
 - 120 minutes
 
+**Course Summary**
+- No
+- Yes
+
 ---
 
 #### Step 3 – Topic Generation
