@@ -22,7 +22,7 @@
  * @copyright  2026 Dynamicpixel Multimedia Solutions
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-define([], function () {
+define(['local_haccgen/quota_modal'], function(QuotaModal) {
 
     /**
      * Format milliseconds into mm:ss.
@@ -210,6 +210,14 @@ define([], function () {
 
                     if (rotateTimer) {
                         clearInterval(rotateTimer);
+                    }
+
+                    if (j.error_code === 'quota_exceeded' || QuotaModal.isQuotaMessage(j.message)) {
+                        QuotaModal.show();
+                        if (formEl) {
+                            formEl.style.display = 'none';
+                        }
+                        return;
                     }
 
                     if (formEl) {

@@ -1439,21 +1439,30 @@ if ($step == 3) {
             $display = $e->getMessage();
             if ($e->errorcode === 'error' && isset($e->a) && $e->a !== null && $e->a !== '' && is_scalar($e->a)) {
                 $display = (string) $e->a;
+            } else if ($e->errorcode === 'quota_exceeded' && isset($e->a) && $e->a !== null && $e->a !== '' && is_scalar($e->a)) {
+                $display = (string) $e->a;
             }
             $formdata['errors']['general'] = $display;
             $formdata['has_topics'] = false;
             $formdata['topics'] = [];
+            if ($e->errorcode === 'quota_exceeded' || local_haccgen_is_quota_exceeded_message($display)) {
+                $formdata['quota_exceeded'] = true;
+            }
 
             debugging('Subtopic generation failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
         } catch (Exception $e) {
             // Catch any unexpected error — include the PHP message (contentgenerationfailed expects {$a}).
-            $formdata['errors']['general'] = get_string(
+            $display = get_string(
                 'contentgenerationfailed',
                 'local_haccgen',
                 $e->getMessage()
             );
+            $formdata['errors']['general'] = $display;
             $formdata['has_topics'] = false;
             $formdata['topics'] = [];
+            if (local_haccgen_is_quota_exceeded_message($e->getMessage())) {
+                $formdata['quota_exceeded'] = true;
+            }
 
             debugging('Unexpected error during subtopic generation: ' . $e->getMessage(), DEBUG_DEVELOPER);
         }
@@ -1823,6 +1832,12 @@ $formdata['labels'] = $labels;
 $formdata['activelang'] = $lang;
 $formdata['sesskey'] = sesskey();
 
+if (!empty($formdata['errors']['general']) && empty($formdata['quota_exceeded'])) {
+    if (local_haccgen_is_quota_exceeded_message((string)$formdata['errors']['general'])) {
+        $formdata['quota_exceeded'] = true;
+    }
+}
+
 echo $OUTPUT->header();
 if ($step == 1) {
     echo $OUTPUT->render_from_template('local_haccgen/ai_form', $formdata);
@@ -1833,6 +1848,7 @@ if ($step == 1) {
 } else if ($step == 4) {
     echo $OUTPUT->render_from_template('local_haccgen/step4_form', $formdata);
 }
+local_haccgen_render_quota_modal_and_js($OUTPUT, $PAGE, !empty($formdata['quota_exceeded']));
 echo $OUTPUT->footer();
 
 ob_end_flush();

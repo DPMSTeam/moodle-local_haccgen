@@ -1,0 +1,17 @@
+<div class="modal fade" id="haccgen-quota-modal" tabindex="-1" aria-labelledby="haccgen-quota-modal-label" aria-hidden="true" data-show-on-load="{{#show_on_load}}1{{/show_on_load}}{{^show_on_load}}0{{/show_on_load}}" style="display:none;">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="haccgen-quota-modal-label">{{title}}</h5>
+                <button type="button" class="btn-close" data-haccgen-quota-close aria-label="{{close_label}}"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-0">{{body}}</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-haccgen-quota-close>{{close_label}}</button>
+                <a href="{{upgrade_url}}" class="btn btn-primary" target="_blank" rel="noopener noreferrer">{{upgrade_label}}</a>
+            </div>
+        </div>
+    </div>
+</div>

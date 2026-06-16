@@ -317,6 +317,9 @@ $string['untitledsubtopic'] = 'Untitled Subtopic';
 $string['upload_error'] = 'An error occurred while uploading the file.';
 $string['upload_pdf'] = 'Upload PDF';
 $string['yes'] = 'Yes';
+$string['quota_exceeded_title'] = 'Word usage limit reached';
+$string['quota_exceeded_body'] = 'You have reached your HACC Gen word usage limit. Add credits or upgrade your plan to continue generating course content.';
+$string['quota_exceeded_upgrade'] = 'Add credits at HACC Gen';
 
 
 

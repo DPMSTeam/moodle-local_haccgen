@@ -109,7 +109,20 @@ class generate_topiccontent_task extends \core\task\adhoc_task {
 
             $job->status = 'error';
             $job->progress = max(10, (int) $job->progress);
-            $job->message = $e->getMessage();
+            $errormessage = $e->getMessage();
+            if ($e instanceof \moodle_exception && isset($e->a) && is_scalar($e->a) && $e->a !== '') {
+                if ($e->errorcode === 'error' || $e->errorcode === 'quota_exceeded') {
+                    $errormessage = (string) $e->a;
+                }
+            }
+            $messagepayload = ['text' => $errormessage];
+            if (
+                ($e instanceof \moodle_exception && $e->errorcode === 'quota_exceeded') ||
+                local_haccgen_is_quota_exceeded_message($errormessage)
+            ) {
+                $messagepayload['error_code'] = 'quota_exceeded';
+            }
+            $job->message = json_encode($messagepayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             $job->timemodified = time();
             $DB->update_record('local_haccgen_job', $job);
 

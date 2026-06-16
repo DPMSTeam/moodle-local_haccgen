@@ -112,7 +112,7 @@ This file is part of Moodle
                     <h6><i class="fas fa-question-circle"></i> Quiz Preview</h6>
                     <div id="quiz-content"></div>
                     <button type="button" class="btn btn-primary mt-3" id="add-new-quiz-btn">
-                        <i class="fas fa-plus-circle"></i> Add Question
+                        <i class="fas fa-plus-circle"></i> Add Question Manually
                     </button>
                 </div>
 
@@ -1014,7 +1014,7 @@ function loadQuizContent(title) {
     currentQuizTitle = title;
 
     if (!quizData || !quizData.questions || !quizData.questions.length) {
-        container.innerHTML = '<p><em>No questions found. Click "Add Question" to create one.</em></p>';
+        container.innerHTML = '<p><em>No questions found. Click "Add Question Manually" to create one.</em></p>';
         return;
     }
 

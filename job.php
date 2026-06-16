@@ -23,6 +23,7 @@
  */
 
 require_once(__DIR__ . '/../../config.php');
+require_once($CFG->dirroot . '/local/haccgen/lib.php');
 
 require_login();
 
@@ -49,6 +50,8 @@ echo $OUTPUT->render_from_template('local_haccgen/job', [
     'consumeurl' => (new moodle_url('/local/haccgen/consume_job.php'))->out(false),
     'sesskey' => sesskey(),
 ]);
+
+local_haccgen_render_quota_modal_and_js($OUTPUT, $PAGE, false);
 
 $PAGE->requires->js_call_amd(
   'local_haccgen/jobprogress',

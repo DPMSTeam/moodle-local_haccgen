@@ -69,6 +69,26 @@ class local_haccgen_api {
     }
 
     /**
+     * Throw a quota-exceeded exception when the remote response indicates usage limits.
+     *
+     * @param array $response Decoded remote response.
+     * @return void
+     */
+    private static function throw_if_quota_exceeded(array $response): void {
+        global $CFG;
+        require_once($CFG->dirroot . '/local/haccgen/lib.php');
+        if (!local_haccgen_is_quota_exceeded_response($response)) {
+            return;
+        }
+        throw new \moodle_exception(
+            'quota_exceeded',
+            'local_haccgen',
+            local_haccgen_quota_upgrade_url(),
+            $response['message'] ?? get_string('quota_exceeded_body', 'local_haccgen')
+        );
+    }
+
+    /**
      * Sets a progress reporter callback.
      *
      * The callback will be invoked to report progress updates
@@ -183,6 +203,8 @@ class local_haccgen_api {
         if (!is_array($response)) {
             throw new \moodle_exception('error', 'local_haccgen', '', 'API response is not an array');
         }
+
+        self::throw_if_quota_exceeded($response);
 
         // If subscription_manager returned an error/status structure, surface that clearly.
         if (
@@ -387,6 +409,8 @@ class local_haccgen_api {
                 'Empty or invalid response from content generation service.'
             );
         }
+
+        self::throw_if_quota_exceeded($response);
 
         // If subscription_manager returned an error/status structure without content payloads, surface that clearly.
         if (
@@ -1190,6 +1214,8 @@ class local_haccgen_api {
         $initialjson = json_encode($initial);
         $log("Initial decoded response: " . substr((string) $initialjson, 0, 800));
 
+        self::throw_if_quota_exceeded($initial);
+
         self::maybe_report_progress_from_api_response($initial, $topiccount);
 
         if (!empty($initial['download_url']) || (!empty($initial['phase']) && $initial['phase'] === 'completed')) {
@@ -1242,6 +1268,8 @@ class local_haccgen_api {
 
             $log("Polling status for request_id={$requestid}.");
             $status = $dopost($url, $payload);
+
+            self::throw_if_quota_exceeded($status);
 
             self::maybe_report_progress_from_api_response($status, $topiccount);
 

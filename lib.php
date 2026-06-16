@@ -820,4 +820,75 @@ function local_haccgen_format_saved_time(int $timestamp): string {
     );
 }
 
+/**
+ * URL shown when the user needs to add credits or upgrade.
+ *
+ * @return string
+ */
+function local_haccgen_quota_upgrade_url(): string {
+    return 'https://haccgen.com/';
+}
+
+/**
+ * Whether a subscription-manager style response indicates quota exhaustion.
+ *
+ * @param mixed $response Decoded API response.
+ * @return bool
+ */
+function local_haccgen_is_quota_exceeded_response($response): bool {
+    if (!is_array($response)) {
+        return false;
+    }
+    $status = strtolower(trim((string)($response['status'] ?? '')));
+    if ($status === 'exhausted') {
+        return true;
+    }
+    return local_haccgen_is_quota_exceeded_message((string)($response['message'] ?? ''));
+}
+
+/**
+ * Whether a plain-text error message indicates quota / usage exhaustion.
+ *
+ * @param string $message Error message.
+ * @return bool
+ */
+function local_haccgen_is_quota_exceeded_message(string $message): bool {
+    $msg = strtolower(trim($message));
+    if ($msg === '') {
+        return false;
+    }
+    if (strpos($msg, 'usage limit exceeded') !== false) {
+        return true;
+    }
+    if (strpos($msg, 'usage limit') !== false && strpos($msg, 'exceed') !== false) {
+        return true;
+    }
+    if (strpos($msg, 'quota') !== false && (strpos($msg, 'exceed') !== false || strpos($msg, 'limit') !== false)) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Render the global quota-exceeded modal and load its AMD module.
+ *
+ * @param \core_renderer $output Page renderer.
+ * @param \moodle_page $page Current page.
+ * @param bool $showonload Open the modal immediately after load.
+ * @return void
+ */
+function local_haccgen_render_quota_modal_and_js($output, $page, bool $showonload = false): void {
+    echo $output->render_from_template('local_haccgen/quota_exceeded_modal', [
+        'upgrade_url' => local_haccgen_quota_upgrade_url(),
+        'title' => get_string('quota_exceeded_title', 'local_haccgen'),
+        'body' => get_string('quota_exceeded_body', 'local_haccgen'),
+        'upgrade_label' => get_string('quota_exceeded_upgrade', 'local_haccgen'),
+        'close_label' => get_string('closebuttontitle', 'core'),
+        'show_on_load' => $showonload,
+    ]);
+    $page->requires->js_call_amd('local_haccgen/quota_modal', 'init', [
+        (object) ['showOnLoad' => (bool) $showonload],
+    ]);
+}
+
 

@@ -23,6 +23,7 @@
  */
 
 require_once(__DIR__ . '/../../config.php');
+require_once($CFG->dirroot . '/local/haccgen/lib.php');
 
 require_login();
 
@@ -40,6 +41,7 @@ if ($job->userid != $USER->id && !is_siteadmin()) {
 $completed = null;
 $total = null;
 $textmsg = '';
+$errorcode = null;
 
 $msgraw = (string) ($job->message ?? '');
 if ($msgraw !== '') {
@@ -54,9 +56,18 @@ if ($msgraw !== '') {
         if (!empty($maybe['text'])) {
             $textmsg = (string) $maybe['text'];
         }
+        if (!empty($maybe['error_code'])) {
+            $errorcode = (string) $maybe['error_code'];
+        }
     } else {
         $textmsg = $msgraw;
     }
+}
+if ($errorcode === null && local_haccgen_is_quota_exceeded_message($textmsg)) {
+    $errorcode = 'quota_exceeded';
+}
+if ($errorcode === 'quota_exceeded' && ($textmsg === '' || strpos($textmsg, 'quota_exceeded') !== false)) {
+    $textmsg = get_string('quota_exceeded_body', 'local_haccgen');
 }
 
 $progress = (int) $job->progress;
@@ -82,6 +93,7 @@ echo json_encode([
     'status' => $job->status,
     'progress' => max(0, min(100, $progress)),
     'message' => $textmsg,
+    'error_code' => $errorcode,
     'completed_topics' => $completed,
     'total_topics' => $total,
     'result' => $result,
