@@ -26,7 +26,7 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_haccgen';
-$plugin->version = 20250712016;
+$plugin->version = 2026021706;
 $plugin->release = '1.5';
 $plugin->requires = 2022112800;
 $plugin->maturity = MATURITY_STABLE;
